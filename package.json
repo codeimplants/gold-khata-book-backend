@@ -1,0 +1,52 @@
+{
+  "name": "gold-khata-book-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "start": "ts-node src/server.ts",
+    "start:prod": "node dist/server.js",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "verify:balance": "ts-node scripts/verify-advance-balance-consistency.ts",
+    "fix:shop-images": "ts-node scripts/fix-corrupt-shop-images.ts",
+    "migrate:legacy-shop-images": "ts-node scripts/migrate-legacy-shop-images.ts",
+    "migrate:customer-phone-index": "ts-node scripts/migrate-customer-phone-index.ts",
+    "migrate:customer-code": "ts-node scripts/migrate-customer-code.ts",
+    "audit:item-plausibility": "ts-node scripts/audit-item-plausibility.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.0",
+    "@types/cors": "^2.8.0",
+    "@types/express": "^4.17.0",
+    "@types/jsonwebtoken": "^9.0.0",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^20.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "ts-node": "^10.0.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.13.4",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "crypto": "^1.0.1",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "imagekit": "^6.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "maxmind": "^5.0.7",
+    "mongodb": "^7.0.0",
+    "mongoose": "^9.1.5",
+    "multer": "^2.0.2",
+    "sharp": "^0.34.5",
+    "zod": "^4.3.6"
+  }
+}
