@@ -27,6 +27,9 @@ export interface IShopDetail {
     invoiceTemplate?: ShopInvoiceTemplate;
     appLanguage?: ShopLanguage;
     declarationLanguage?: ShopLanguage;
+    /** Whether this wholesaler takes old ornaments for melt. Undefined on a
+     *  shop that has never answered, which the app reads as off. */
+    oldGoldMelt?: boolean;
     createdAt?: Date;
 }
 
@@ -52,6 +55,7 @@ export interface UpdateShopPreferencesDTO {
     invoiceTemplate?: ShopInvoiceTemplate;
     appLanguage?: ShopLanguage;
     declarationLanguage?: ShopLanguage;
+    oldGoldMelt?: boolean;
 }
 
 export type CreateShopDetailDTO = IShopDetail;

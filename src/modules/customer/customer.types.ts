@@ -22,7 +22,15 @@ export interface Customer {
    *  migration runs — so every reader must treat it as optional. */
   customerCode?: string;
 
+  /** The display identity — bills, lists, search and the duplicate check all
+   *  read this. Derived on write: the shop name when there is one, the owner's
+   *  name when there is not. Always present. */
   name: string;
+  /** Who you deal with. Required by the form; optional here because older
+   *  records predate the field. */
+  ownerName?: string;
+  /** The shop, when it has a name of its own. */
+  shopName?: string;
   /** Optional — see the partial unique index in customer.model.ts. Absent, never `""`. */
   phone?: string;
   email?: string;
@@ -44,6 +52,8 @@ export interface Customer {
 
 export interface CreateCustomerDTO {
   name: string;
+  ownerName?: string;
+  shopName?: string;
   phone?: string;
   email?: string;
   address?: string;
@@ -53,6 +63,8 @@ export interface CreateCustomerDTO {
 
 export interface UpdateCustomerDTO {
   name?: string;
+  ownerName?: string;
+  shopName?: string;
   phone?: string;
   email?: string;
   address?: string;

@@ -8,7 +8,6 @@ import { ShopDetailService } from "../shopDetail/shopDetails.service";
 import { InvoiceModel } from "../invoice/invoice.model";
 import { OrderModel } from "../order/order.model";
 import { CustomerModel } from "../customer/customer.model";
-import { PurchaseOldGoldModel } from "../purchaseOldGold/purchaseOldGold.model";
 import { CounterModel } from "../../common/models/Counter.model";
 import { CommunicationService } from "../communication/communication.service";
 import { deleteShopFolder } from "../../common/utils/imageKit";
@@ -238,7 +237,6 @@ export const DukandarService = {
             // going, and exportShopBeforeDelete has already written every one of
             // these to JSON — it counts them in hasRealData, so a shop holding
             // only declarations is correctly treated as a shop with real data.
-            PurchaseOldGoldModel.deleteMany({ userId: id }),
             // Per-shop numbering sequences: customer_<id>, invoice_<id>,
             // purchaseOldGold_<id>. Left behind, they are rows that can never
             // be read again, and a phone re-registering as a new shop gets a

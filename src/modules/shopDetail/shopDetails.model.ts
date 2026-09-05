@@ -147,6 +147,19 @@ const shopDetailSchema = new Schema<IShopDetail>(
             },
         },
 
+        // Whether this wholesaler takes old ornaments for melt at all.
+        //
+        // A shop property like the ones above, not a device one: the counter PC
+        // and the back office must agree about whether the melt controls exist,
+        // or one of them shows a retailer a credit the other cannot explain.
+        //
+        // No `default` here for the same reason as the three above — a default
+        // writes itself into every existing shop on that document's next save.
+        // Undefined means "never answered", which the app reads as off.
+        oldGoldMelt: {
+            type: Boolean,
+        },
+
         createdAt: {
             type: Date,
             default: Date.now,

@@ -4,7 +4,7 @@ import type {
   InvoiceItem,
   InvoiceAdvancePayment,
 } from "./invoice.types";
-import { getNextSequence } from "../../common/utils/counter.util";
+import { nextDocumentNumber } from "../../common/utils/documentNumber";
 
 const InvoiceItemSchema = new Schema<InvoiceItem>(
   {
@@ -173,23 +173,6 @@ const InvoiceSchema = new Schema<Invoice>(
       },
     },
 
-    isOrnamentExchanges: {
-      type: Boolean,
-      required: true,
-      default: false,
-    },
-
-    // Mixed (not a typed sub-schema) so Mongoose never tries to cast this
-    // path on read — invoices created before the per-item exchange
-    // extension still store the legacy {gold, silver} aggregate shape, and
-    // casting that against an array schema on every hydrate would risk
-    // errors/data loss for those older documents. Shape validation for new
-    // writes happens at the zod boundary (ornamentExchangeItemSchema).
-    ornamentExchanges: {
-      type: Schema.Types.Mixed,
-      required: false,
-    },
-
     includeGST: {
       type: Boolean,
       required: true,
@@ -347,10 +330,6 @@ InvoiceSchema.pre("validate", function (this: any) {
   if (this.sgstAmount != null) this.sgstAmount = Number(this.sgstAmount.toFixed(3));
   if (this.igstAmount != null) this.igstAmount = Number(this.igstAmount.toFixed(3));
 
-  // When isOrnamentExchanges is false, drop ornamentExchanges
-  if (!this.isOrnamentExchanges) {
-    this.ornamentExchanges = undefined;
-  }
 });
 
 // Auto-generate invoiceNumber if not provided
@@ -359,9 +338,7 @@ InvoiceSchema.pre("save", async function (this: any) {
     try {
       console.log(`[InvoiceModel] Hook Triggered. Generating number for userId=${this.userId}`);
       console.trace("[InvoiceModel] Trace for invoice creation:");
-      const id = this.userId || this.dukandarId || "global";
-      const sequence = await getNextSequence(`invoice_${id}`);
-      this.invoiceNumber = `INV-${sequence}`;
+      this.invoiceNumber = await nextDocumentNumber(this.userId, this.dukandarId);
       console.log(`[InvoiceModel] Assigned: ${this.invoiceNumber}`);
     } catch (err: any) {
       console.error(`[InvoiceModel] Hook Error: ${err.message}`);

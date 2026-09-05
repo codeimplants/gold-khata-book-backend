@@ -27,30 +27,6 @@ export interface InvoiceItem {
   photos?: { url: string; fileId: string }[];
 }
 
-export interface OrnamentMetalExchange {
-  weight: number;
-  amount: number;
-}
-
-// Legacy aggregate shape — only ever read from invoices created before the
-// per-item exchange extension. New invoices always use OrnamentExchangeItem[].
-export interface OrnamentExchanges {
-  gold: OrnamentMetalExchange;
-  silver: OrnamentMetalExchange;
-}
-
-export interface OrnamentExchangeItem {
-  type: "Gold" | "Silver";
-  itemName?: string;
-  grossWeight?: number;
-  lessWeight?: number;
-  netWeight?: number;
-  purity?: string;
-  ratePerGram?: number;
-  // Total value credited for this exchanged item — the only mandatory field.
-  amount: number;
-}
-
 export interface InvoiceAdvancePayment {
   date: Date;
   amount: number;
@@ -71,8 +47,6 @@ export interface Invoice {
   invoiceNumber: string;
   items: InvoiceItem[];
 
-  isOrnamentExchanges: boolean;
-  ornamentExchanges?: OrnamentExchangeItem[];
 
   includeGST: boolean;
 
@@ -121,8 +95,6 @@ export interface CreateInvoiceDTO {
   invoiceDate: string | Date;
   invoiceNumber?: string;
   items: Omit<InvoiceItem, "netWeight">[];
-  isOrnamentExchanges: boolean;
-  ornamentExchanges?: OrnamentExchangeItem[];
   includeGST: boolean;
   gstAmount: number;
   subTotal: number;
@@ -157,8 +129,6 @@ export interface UpdateInvoiceDTO {
   invoiceDate?: string | Date;
   invoiceNumber?: string;
   items?: Omit<InvoiceItem, "netWeight">[];
-  isOrnamentExchanges?: boolean;
-  ornamentExchanges?: OrnamentExchangeItem[];
   includeGST?: boolean;
   gstAmount?: number;
   subTotal?: number;

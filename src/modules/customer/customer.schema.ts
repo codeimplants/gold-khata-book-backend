@@ -30,8 +30,21 @@ const phoneOnCreate = phoneValue.transform((v) => (v ? v : undefined));
  */
 const phoneOnUpdate = phoneValue;
 
+/** Both optional on the wire. The FORM requires an owner name, but `name` is
+ *  derived from these two before the request is sent, so the server's contract
+ *  only needs the derived value to be present. */
+const personOrShopName = z
+  .string()
+  .trim()
+  .max(INPUT_LIMITS.customerName, `Name must be ${INPUT_LIMITS.customerName} characters or less`)
+  .optional()
+  .or(z.literal(""));
+
 export const createCustomerSchema = z.object({
+  // The derived display name — see customer.model.ts.
   name: z.string().min(2, "Name must be at least 2 characters").max(INPUT_LIMITS.customerName, `Name must be ${INPUT_LIMITS.customerName} characters or less`),
+  ownerName: personOrShopName,
+  shopName: personOrShopName,
   phone: phoneOnCreate,
   email: z.string().email("Invalid email address").max(INPUT_LIMITS.email, `Email must be ${INPUT_LIMITS.email} characters or less`).optional().or(z.literal("")),
   address: z.string().max(INPUT_LIMITS.customerAddress, `Address must be ${INPUT_LIMITS.customerAddress} characters or less`).optional(),
@@ -41,6 +54,8 @@ export const createCustomerSchema = z.object({
 
 export const updateCustomerSchema = z.object({
   name: z.string().min(2).max(INPUT_LIMITS.customerName, `Name must be ${INPUT_LIMITS.customerName} characters or less`).optional(),
+  ownerName: personOrShopName,
+  shopName: personOrShopName,
   phone: phoneOnUpdate,
   email: z.string().email().max(INPUT_LIMITS.email, `Email must be ${INPUT_LIMITS.email} characters or less`).optional().or(z.literal("")),
   address: z.string().max(INPUT_LIMITS.customerAddress, `Address must be ${INPUT_LIMITS.customerAddress} characters or less`).optional(),

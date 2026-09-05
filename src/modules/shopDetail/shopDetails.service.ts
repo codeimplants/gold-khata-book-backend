@@ -295,6 +295,7 @@ export const ShopDetailService = {
         if (prefs.invoiceTemplate !== undefined) update.invoiceTemplate = prefs.invoiceTemplate;
         if (prefs.appLanguage !== undefined) update.appLanguage = prefs.appLanguage;
         if (prefs.declarationLanguage !== undefined) update.declarationLanguage = prefs.declarationLanguage;
+        if (prefs.oldGoldMelt !== undefined) update.oldGoldMelt = prefs.oldGoldMelt;
 
         // Nothing to write — hand back the current document rather than an
         // empty $set, so the caller still gets the shop's stored preferences.

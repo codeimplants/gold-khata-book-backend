@@ -219,13 +219,14 @@ export const ShopDetailController = {
             throw new AppError("Unauthorized", { statusCode: 401, code: "UNAUTHORIZED" });
         }
 
-        const { invoiceTemplate, appLanguage, declarationLanguage } =
+        const { invoiceTemplate, appLanguage, declarationLanguage, oldGoldMelt } =
             (req.body ?? {}) as UpdateShopPreferencesDTO;
 
         const shop = await ShopDetailService.updateShopPreferences(userId, role, {
             invoiceTemplate,
             appLanguage,
             declarationLanguage,
+            oldGoldMelt,
         });
 
         if (!shop) {

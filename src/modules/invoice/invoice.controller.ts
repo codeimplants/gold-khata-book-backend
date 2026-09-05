@@ -193,49 +193,6 @@ export const InvoiceController = {
     }
   ),
 
-addExchangePhotos: asyncHandler(
-    async (req: Request, res: Response<ApiResponse<unknown>>) => {
-      const files = (req.files as any[]) || [];
-      if (files.length === 0) {
-        throw new AppError("No photos uploaded", {
-          statusCode: 400,
-          code: "BAD_REQUEST",
-        });
-      }
-      const record = await InvoiceService.addExchangePhotos(
-        req.auth!.sub,
-        req.params.id,
-        Number(req.params.exchangeIndex),
-        files
-      );
-      if (!record) {
-        throw new AppError("Invoice not found", {
-          statusCode: 404,
-          code: "NOT_FOUND",
-        });
-      }
-      res.status(200).json({ success: true, data: record, message: "Photos added" });
-    }
-  ),
-
-  removeExchangePhoto: asyncHandler(
-    async (req: Request, res: Response<ApiResponse<unknown>>) => {
-      const record = await InvoiceService.removeExchangePhoto(
-        req.auth!.sub,
-        req.params.id,
-        Number(req.params.exchangeIndex),
-        req.params.fileId
-      );
-      if (!record) {
-        throw new AppError("Invoice not found", {
-          statusCode: 404,
-          code: "NOT_FOUND",
-        });
-      }
-      res.status(200).json({ success: true, data: record, message: "Photo removed" });
-    }
-  ),
-
   removeItemPhoto: asyncHandler(
     async (req: Request, res: Response<ApiResponse<unknown>>) => {
       const invoice = await InvoiceService.removeItemPhoto(

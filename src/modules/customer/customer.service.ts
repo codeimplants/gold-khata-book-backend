@@ -2,7 +2,6 @@ import { CustomerModel } from "./customer.model";
 import { CreateCustomerDTO, UpdateCustomerDTO } from "./customer.types";
 import { InvoiceModel } from "../invoice/invoice.model";
 import { OrderModel } from "../order/order.model";
-import { PurchaseOldGoldModel } from "../purchaseOldGold/purchaseOldGold.model";
 import { ShopDetail } from "../shopDetail/shopDetails.model";
 import {
   uploadCustomerPhoto,
@@ -116,14 +115,6 @@ export const CustomerService = {
         // Null means nothing was at the old path — already moved by an earlier
         // attempt, or never uploaded. Nothing to repoint either way.
         if (newUrl) {
-          // Declarations snapshot the photo URL so a reprint shows the face
-          // that was on the signed document. The bytes did not change, only
-          // their address — repointing preserves what those documents showed.
-          await PurchaseOldGoldModel.updateMany(
-            { customerId: toOid(customerId), userId: toOid(dukandarId) },
-            { $set: { "customerSnapshot.photoUrl": newUrl } }
-          );
-
           updated.profilePhoto = {
             url: newUrl,
             fileId: updated.profilePhoto?.fileId || "",
@@ -176,17 +167,14 @@ export const CustomerService = {
     // nothing left that names them. Declarations are included because this
     // path destroys them outright — unlike deleting a single bill, which
     // retires the declaration and deliberately keeps its evidence.
-    const [doomedInvoices, doomedOrders, doomedDeclarations] = await Promise.all([
+    const [doomedInvoices, doomedOrders] = await Promise.all([
       InvoiceModel.find({ customerId: oid, dukandarId: owner }).lean(),
       OrderModel.find({ customerId: oid, userId: owner }).lean(),
-      PurchaseOldGoldModel.find({ customerId: oid, userId: owner }).lean(),
     ]);
 
     const fileIds = [
       ...new Set(
-        [...doomedInvoices, ...doomedOrders, ...doomedDeclarations].flatMap(
-          collectPhotoFileIds,
-        ),
+        [...doomedInvoices, ...doomedOrders].flatMap(collectPhotoFileIds),
       ),
     ];
 
@@ -195,7 +183,6 @@ export const CustomerService = {
     await Promise.all([
       InvoiceModel.deleteMany({ customerId: oid, dukandarId: owner }),
       OrderModel.deleteMany({ customerId: oid, userId: owner }),
-      PurchaseOldGoldModel.deleteMany({ customerId: oid, userId: owner }),
       // The per-dukandar ledger rows for those bills. Deleting one invoice on
       // its own has always removed them (see deleteInvoice); this path used
       // deleteMany and skipped straight past that, so wiping a customer's

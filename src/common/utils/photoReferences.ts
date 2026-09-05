@@ -2,7 +2,6 @@ import { Types } from "mongoose";
 
 import { InvoiceModel } from "../../modules/invoice/invoice.model";
 import { OrderModel } from "../../modules/order/order.model";
-import { PurchaseOldGoldModel } from "../../modules/purchaseOldGold/purchaseOldGold.model";
 import { deleteImageByFileId } from "./imageKit";
 
 /**
@@ -49,7 +48,6 @@ export const collectPhotoFileIds = (doc: any): string[] => {
   push(doc.photos);              // declaration: bill-wide/ornament set
   push(doc.ornamentPhotos);      // invoice + order
   (doc.items || []).forEach((i: any) => push(i?.photos));
-  (doc.ornamentExchanges || []).forEach((e: any) => push(e?.photos));
   (doc.witnesses || []).forEach((w: any) => push(w?.photos));
   (doc.idProofs || []).forEach((e: any) => push(e?.photos));
 
@@ -78,41 +76,22 @@ export const deletePhotoIfUnreferenced = async (
   try {
     const uid = new Types.ObjectId(userId);
 
-    const [onInvoice, onOrder, onDeclaration] = await Promise.all([
+    const [onInvoice, onOrder] = await Promise.all([
       InvoiceModel.exists({
         userId: uid,
         $or: [
           { "items.photos.fileId": fileId },
-          { "ornamentPhotos.fileId": fileId },
-          { "ornamentExchanges.photos.fileId": fileId },
         ],
       }),
       OrderModel.exists({
         userId: uid,
         $or: [
           { "items.photos.fileId": fileId },
-          { "ornamentPhotos.fileId": fileId },
-          { "ornamentExchanges.photos.fileId": fileId },
-        ],
-      }),
-      PurchaseOldGoldModel.exists({
-        userId: uid,
-        $or: [
-          { "photos.fileId": fileId },
-          { "items.photos.fileId": fileId },
-          { "witnesses.photos.fileId": fileId },
-          // Added 26 Aug 2026. A declaration holds scans on its ID-proof
-          // entries as well, and leaving them out of this check inverted the
-          // whole point of it: a file referenced only by an ID proof looked
-          // unreferenced, so releasing any other holder deleted a scan the
-          // declaration still pointed at. That is the one place a broken image
-          // matters most — the identity evidence on a signed legal record.
-          { "idProofs.photos.fileId": fileId },
         ],
       }),
     ]);
 
-    if (onInvoice || onOrder || onDeclaration) return;
+    if (onInvoice || onOrder) return;
 
     await deleteImageByFileId(fileId);
   } catch {

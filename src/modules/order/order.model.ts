@@ -1,5 +1,11 @@
 import mongoose, { Schema } from "mongoose";
 import type { Order, AdvancePayment } from "./order.types";
+import {
+    priceLine,
+    totalFine995,
+    priceInboundMetal,
+    SETTLEMENT_FINENESS,
+} from "../../common/utils/goldPricing";
 
 /**
  * Grams below which an advance order counts as fully settled.
@@ -82,6 +88,36 @@ const AdvancePaymentSchema = new Schema<AdvancePayment>(
             type: String,
             trim: true,
         },
+
+        // Metal handed over as this payment. A retailer settles in gold, cash,
+        // or both, so `amount` and `goldWeight` can both be set on one payment.
+        goldWeight: {
+            type: Number,
+            required: false,
+            min: 0,
+        },
+        goldPurity: {
+            type: Number,
+            required: false,
+            min: 0,
+            max: 100,
+        },
+        // Derived in the pre-save hook from goldWeight and goldPurity.
+        fineWeight: {
+            type: Number,
+            required: false,
+            default: 0,
+            min: 0,
+        },
+        // Which account the CASH on this payment settles — see AdvancePayment
+        // in order.types.ts. Defaults to "metal", the advance-booking meaning
+        // cash has always had here.
+        settles: {
+            type: String,
+            required: false,
+            enum: ["metal", "cash"],
+            default: "metal",
+        },
     },
     { _id: true }
 );
@@ -93,70 +129,52 @@ const OrderItemSchema = new Schema(
             required: true,
             trim: true,
         },
-        itemType: {
-            type: String,
-            required: true,
-            enum: ["Gold", "Silver"],
-        },
-        purity: {
-            type: String,
-            required: true,
-        },
+
+        // As weighed, in grams. NOT what the retailer is charged for — see the
+        // pre-save hook, which runs this through the purity uplift and wastage
+        // to reach a fine-99.50 weight.
         weight: {
             type: Number,
             required: true,
             min: 0,
         },
-        grossWeight: {
+
+        // Purity as entered, in percent: 91.6 for 22K, not the string "22K".
+        // The wholesaler's uplift is applied on top (goldPricing.chargedPurity)
+        // and is never stored here — this stays what the metal actually is.
+        purity: {
+            type: Number,
+            required: true,
+            min: 0,
+            max: 100,
+        },
+
+        // Wastage / Tunch, in percent. ADDED to the charged purity rather than
+        // multiplied against the fine weight; on 100 g at 92 with 8% wastage
+        // that is 100.000 g against 99.360 g.
+        wastage: {
             type: Number,
             required: false,
+            default: 0,
             min: 0,
         },
-        lessWeight: {
-            type: Number,
-            required: false,
-            min: 0,
-        },
+
+        // Rupees per gram of 99.50 fine — the only rate this product quotes.
         rate: {
             type: Number,
             required: false,
             min: 0,
             default: 0,
         },
-        makingChargeType: {
-            type: String,
-            required: true,
-            enum: ["Per Gram", "%", "Fix"],
-        },
-        makingChargeValue: {
-            type: Number,
-            required: true,
-            min: 0,
-        },
-        chargeDescription: {
-            type: String,
-            required: false,
-            trim: true,
-        },
-        chargeAmount: {
-            type: Number,
-            required: false,
-            min: 0,
-            default: 0,
-        },
-        discountType: {
-            type: String,
-            required: false,
-            trim: true,
-        },
-        discount: {
-            type: Number,
-            required: false,
-            min: 0,
-            default: 0,
-        },
-        // Photos of the item being made/sold, so the shopkeeper can see months
-        // later which piece this was. Mirrors InvoiceItemSchema.photos.
+
+        // Derived in the pre-save hook. Stored so a bill can be reprinted, and
+        // a dispute answered, without re-deriving from rules that may have
+        // moved since.
+        chargedPurity: { type: Number, required: false, min: 0 },
+        fine999: { type: Number, required: false, min: 0 },
+        fine995: { type: Number, required: false, min: 0 },
+
+        // Photos of the item being made/sold. Mirrors InvoiceItemSchema.photos.
         photos: {
             type: [
                 {
@@ -246,9 +264,45 @@ const OrderSchema = new Schema<Order>(
             min: 0,
         },
 
+        // The METAL account: grams still owed. See order.types.ts.
         remainingWeight: {
             type: Number,
             required: true,
+            min: 0,
+        },
+
+        /**
+         * Grams of excess already converted into retailer credit.
+         *
+         * Paying more than an order comes to leaves `remainingWeight` at 0 and
+         * the surplus with nowhere to go — it used to be silently discarded.
+         * The surplus is now credited to the retailer's held cash, and this
+         * records how much of it has been, so a second save of the same order
+         * cannot credit the same rupees twice.
+         *
+         * In GRAMS rather than rupees because that is the unit the surplus
+         * arises in; the rupee figure is derived from it at the order's rate.
+         */
+        creditedExcessWeight: {
+            type: Number,
+            required: true,
+            default: 0,
+            min: 0,
+        },
+
+        // Cash received against the charges account.
+        cashPaid: {
+            type: Number,
+            required: true,
+            default: 0,
+            min: 0,
+        },
+
+        // The CASH account: rupees still owed, held apart from the metal.
+        outstandingCash: {
+            type: Number,
+            required: true,
+            default: 0,
             min: 0,
         },
 
@@ -292,57 +346,12 @@ const OrderSchema = new Schema<Order>(
             required: true,
             default: false,
         },
-        isOrnamentExchanges: {
-            type: Boolean,
-            required: true,
-            default: false,
-        },
-
-        // Grams the old gold settled, derived in the pre-save hook from the
-        // exchange value and the order's effective rate. Deliberately has NO
-        // schema default: Mongoose applies defaults on hydrate, and a default
-        // here would write a value onto legacy orders the moment they are next
-        // saved for any reason. The hook sets it explicitly instead.
-        exchangeWeightCovered: {
-            type: Number,
-            required: false,
-            min: 0,
-        },
-
-        // Surplus when the old gold is worth more than the whole order — money
-        // the shop owes the customer. Same no-default reasoning as above.
-        exchangeExcess: {
-            type: Number,
-            required: false,
-            min: 0,
-        },
-
-        // Photos of the old ornaments taken in against this order. They belong
-        // to the acquisition, not to the declaration: a shopkeeper may photograph
-        // the goods and never print a declaration, and a declaration written
-        // later must be able to reuse them rather than ask for them again.
-        ornamentPhotos: {
-            type: [
-                {
-                    url: { type: String, required: true, trim: true },
-                    fileId: { type: String, required: true, trim: true },
-                },
-            ],
-            required: false,
-            default: undefined,
-        },
         // Off unless the shopkeeper turns it on, and off for every order that
         // predates the field.
         includeItemPhotosOnBill: {
             type: Boolean,
             required: false,
             default: false,
-        },
-        // Mixed, same as InvoiceSchema.ornamentExchanges — avoids Mongoose
-        // casting older/differently-shaped rows on hydrate.
-        ornamentExchanges: {
-            type: Schema.Types.Mixed,
-            required: false,
         },
         gstRate: {
             type: Number,
@@ -397,10 +406,11 @@ OrderSchema.index({ customerId: 1, status: 1 });
 OrderSchema.pre("save", function (this: any) {
     // Calculate total weight from items if not manually set (though usually handled by items)
     if (this.items && this.items.length > 0) {
-        this.totalWeight = Number(this.items.reduce(
-            (sum: number, item: any) => sum + (item.weight || 0),
-            0
-        ).toFixed(3));
+        // The METAL account is denominated in fine 99.50, not in the
+        // ornaments' own grams — that is the unit every payment, melt credit
+        // and settlement is expressed in. Summing raw weights here would put
+        // the account in one unit and everything drawn against it in another.
+        this.totalWeight = totalFine995(this.items as any);
     }
 
     // Sort payments by date to ensure history is chronological
@@ -408,13 +418,35 @@ OrderSchema.pre("save", function (this: any) {
         this.payments.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
     }
 
+    const paymentsArr = this.payments || [];
+
+    // Metal handed over, converted to the 99.50 the account is denominated in.
+    //
+    // Through priceInboundMetal, not a plain purity multiply: that gives a 99.9
+    // figure, and crediting it straight against a 99.50 account silently
+    // shortchanges the retailer by ~0.2% of every gram they hand over. Purity
+    // defaults to settlement fineness so metal recorded without one is taken as
+    // already-fine rather than discounted to nothing.
+    paymentsArr.forEach((payment: any) => {
+        payment.fineWeight = payment.goldWeight
+            ? priceInboundMetal(payment.goldWeight, payment.goldPurity ?? SETTLEMENT_FINENESS)
+            : 0;
+    });
+
     // totalPaid stays CASH ONLY. Old gold given against the order settles part
     // of it, but no money changed hands for that part — folding it in here would
     // report a larger sum received than the shop actually took, and would blur
-    // the purchase leg the profit work needs to see separately.
-    const paymentsArr = this.payments || [];
+    // the purchase leg the profit work needs to see separately. Metal handed
+    // over as a payment is excluded for the same reason.
     this.totalPaid = Number(paymentsArr.reduce(
         (sum: number, payment: any) => sum + (payment.amount || 0),
+        0
+    ).toFixed(3));
+
+    // Of that cash, the part aimed at the charges account rather than at metal.
+    this.cashPaid = Number(paymentsArr.reduce(
+        (sum: number, payment: any) =>
+            sum + (payment.settles === "cash" ? (payment.amount || 0) : 0),
         0
     ).toFixed(3));
 
@@ -427,29 +459,25 @@ OrderSchema.pre("save", function (this: any) {
     // Rs.11,68,500. Carrying full precision makes the two agree by algebra:
     // (totalWeight - amount/rate) * rate === totalWeight*rate - amount.
     // Display layers already format with .toFixed(3); rounding belongs there.
+    // Cash aimed at metal, expressed as the grams it bought. Payments that
+    // settle the charges account are excluded — that money clears making and
+    // GST and never becomes metal, so counting its weightCovered here would
+    // pay the same rupee down twice, once against each account.
     const weightFromPayments = paymentsArr.reduce(
-        (sum: number, payment: any) => sum + (payment.weightCovered || 0),
+        (sum: number, payment: any) =>
+            sum + (payment.settles === "cash" ? 0 : (payment.weightCovered || 0)),
         0
     );
 
-    // Old gold settles WEIGHT, exactly as an advance payment does. Previously
-    // the exchange only reduced the rupee subtotal further down, so an order
-    // could be fully covered in money while still showing the customer owed the
-    // full weight — the two halves of the same order disagreed.
-    const exchangeValue = this.isOrnamentExchanges && Array.isArray(this.ornamentExchanges)
-        ? (this.ornamentExchanges as any[]).reduce((sum, ex) => sum + (Number(ex?.amount) || 0), 0)
-        : 0;
+    // Metal handed over directly, already reduced to fine grams above.
+    const weightFromMetal = paymentsArr.reduce(
+        (sum: number, payment: any) => sum + (payment.fineWeight || 0),
+        0
+    );
 
     const weightedRate = weightedItemRate(this.items, this.bookingRate);
 
-    // Unrounded for the same reason as weightFromPayments above — old gold
-    // settles weight, so its grams feed the same `remainingWeight * rate`
-    // money math and carry the same rounding error into the balance.
-    this.exchangeWeightCovered = weightedRate > 0
-        ? exchangeValue / weightedRate
-        : 0;
-
-    this.weightPaid = weightFromPayments + this.exchangeWeightCovered;
+    this.weightPaid = weightFromPayments + weightFromMetal;
 
     // Calculate remaining weight
     this.remainingWeight = Math.max(0, (this.totalWeight || 0) - (this.weightPaid || 0));
@@ -462,57 +490,44 @@ OrderSchema.pre("save", function (this: any) {
         this.bookingRate = Number(sorted[0].goldRate.toFixed(3));
     }
 
-    // Per-item value: goldValue (netWt * item.rate) + making charge (by type)
-    // + other charges - discount. Mirrors calculateItemValues/getItemComponents
-    // in mobile's src/utils/calculations.ts so the persisted total matches what
-    // the create-order screen shows the user.
-    let itemsSubtotal = 0;
-    let totalMaking = 0;
+    // Each line priced through the one implementation of the wholesale chain:
+    // purity uplifted, wastage added to it, the result taken to fine 99.50.
+    // See goldPricing.ts — and never inline any part of it here, because the
+    // app mirrors that module for live preview and the two must agree exactly.
+    //
+    // The derived figures are written back onto the item so a bill can be
+    // reprinted, and a dispute answered, without re-deriving from rules that
+    // may have moved since.
     let totalGoldValue = 0;
     if (this.items && this.items.length > 0) {
         for (const it of this.items as any[]) {
-            const netWt = it.weight || 0;
-            const grossWt = it.grossWeight ?? netWt;
+            const priced = priceLine({
+                weight: it.weight || 0,
+                purity: it.purity || 0,
+                wastage: it.wastage || 0,
+            });
+
+            it.chargedPurity = priced.chargedPurity;
+            it.fine999 = priced.fine999;
+            it.fine995 = priced.fine995;
+
             const rate = it.rate || this.bookingRate || 0;
-            const makingValue = it.makingChargeValue || 0;
-
-            let makingTotal = 0;
-            if (it.makingChargeType === "%") {
-                makingTotal = (grossWt * rate * makingValue) / 100;
-            } else if (it.makingChargeType === "Per Gram") {
-                makingTotal = grossWt * makingValue;
-            } else {
-                makingTotal = makingValue; // Fix
-            }
-            totalMaking += makingTotal;
-
-            totalGoldValue += netWt * rate;
-
-            const chargeAmount = it.chargeAmount || 0;
-            const discount = it.discount || 0;
-            const beforeDiscount = (netWt * rate) + makingTotal + chargeAmount;
-            const discountValue = (it.discountType || "").toLowerCase() === "%" ||
-                (it.discountType || "").toLowerCase() === "percentage" ||
-                (it.discountType || "").toLowerCase() === "percent"
-                ? (beforeDiscount * discount) / 100
-                : discount;
-
-            itemsSubtotal += Math.max(0, beforeDiscount - discountValue);
+            totalGoldValue += priced.fine995 * rate;
         }
     }
-    this.estimatedMakingCharges = Number(totalMaking.toFixed(3));
 
-    const subtotalBeforeGst = Math.max(0, itemsSubtotal - exchangeValue);
+    // A wholesale line is metal and nothing else — no making charge, no other
+    // charges, no discount. Wastage IS the labour, and it is already inside
+    // the fine weight above rather than sitting beside it in rupees.
+    const itemsSubtotal = totalGoldValue;
+    this.estimatedMakingCharges = 0;
+
+    const subtotalBeforeGst = Math.max(0, itemsSubtotal);
     const gstAmount = this.includeGST ? subtotalBeforeGst * ((this.gstRate ?? 3) / 100) : 0;
     const totalAmount = subtotalBeforeGst + gstAmount;
 
     this.subTotal = Number(subtotalBeforeGst.toFixed(3));
     this.gstAmount = Number(gstAmount.toFixed(3));
-
-    // Old gold worth more than the whole order. The subtotal already clamps at
-    // zero, so the surplus would otherwise vanish — record it explicitly as
-    // money owed back to the customer rather than silently absorbing it.
-    this.exchangeExcess = Number(Math.max(0, exchangeValue - itemsSubtotal).toFixed(3));
 
     this.amount = Number(totalAmount.toFixed(3));
 
@@ -520,8 +535,21 @@ OrderSchema.pre("save", function (this: any) {
     // and discounts are properties of the order, not of the weight still owed.
     const nonGoldCharges = itemsSubtotal - totalGoldValue;
 
+    // The CASH account. Making, other charges and GST are owed as money, so
+    // they are held here rather than converted into grams and folded into the
+    // metal account. A retailer can clear their metal and still owe charges, or
+    // the reverse — the two settle independently.
+    //
+    // A full-payment order is settled when it is raised, by definition, so only
+    // an advance order can carry either balance.
+    const cashCharges = nonGoldCharges + gstAmount;
+    this.outstandingCash =
+        this.status === "completed" || this.paymentMode !== "advance"
+            ? 0
+            : Number(Math.max(0, cashCharges - (this.cashPaid || 0)).toFixed(3));
+
     // Calculate estimated balance
-    if (this.status === "completed" || this.remainingWeight < WEIGHT_SETTLED_EPSILON_GM) {
+    if (this.status === "completed") {
         this.estimatedBalance = 0;
     } else if (this.paymentMode === "advance") {
         // An advance order settles in WEIGHT, not rupees: every payment locked
@@ -534,20 +562,20 @@ OrderSchema.pre("save", function (this: any) {
         // does, so the screen, the printed bill and this stored value are now one
         // number instead of three formulas that agreed only while every rate on
         // the order happened to be identical.
-        const balanceBeforeGst = Math.max(
-            0,
-            this.remainingWeight * weightedRate + nonGoldCharges,
-        );
+        //
+        // The epsilon applies to the METAL only. Metal being settled no longer
+        // means the order is settled — the charges account can still be open —
+        // so a sliver of leftover weight is dropped here without zeroing the
+        // whole balance the way it used to.
+        const metalOutstanding =
+            this.remainingWeight < WEIGHT_SETTLED_EPSILON_GM ? 0 : this.remainingWeight;
 
-        // GST is quoted tentatively on the TOTAL cost of the item at the booking
-        // rate — not on the balance alone. The advance is adjusted against a
-        // gross invoice at final settlement, so the tax does not shrink just
-        // because part of the order has already been paid for. `gstAmount` above
-        // is exactly that figure, which is also what the create-order screen
-        // shows, so the quote a customer sees before paying and the one they see
-        // afterwards are the same number.
+        // The two accounts priced as one figure. `outstandingCash` already
+        // carries the charges net of anything paid against them, so GST is not
+        // added again here: it is quoted on the total at the booking rate and
+        // lives in that account from the moment the order is raised.
         this.estimatedBalance = Number(
-            (balanceBeforeGst + gstAmount).toFixed(3),
+            (metalOutstanding * weightedRate + this.outstandingCash).toFixed(3),
         );
     } else {
         this.estimatedBalance = Number(Math.max(0, totalAmount - (this.totalPaid || 0)).toFixed(3));

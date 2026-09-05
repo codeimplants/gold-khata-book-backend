@@ -15,7 +15,6 @@ import { CreateInvoiceDTO } from "../invoice/invoice.types";
 import { AppError } from "../../common/errors/AppError";
 import { InvoiceService } from "../invoice/invoice.service";
 import { InvoiceModel } from "../invoice/invoice.model";
-import { retireDeclarationFor } from "../../common/utils/declarationLifecycle";
 import { ShopDetail } from "../shopDetail/shopDetails.model";
 import { uploadOrnamentPhoto, deleteImageByFileId } from "../../common/utils/imageKit";
 import { deletePhotoIfUnreferenced, collectPhotoFileIds, releasePhotos } from "../../common/utils/photoReferences";
@@ -25,72 +24,16 @@ const MAX_ORNAMENT_PHOTOS = 6;
 /** Per item, not per order — matches InvoiceService.MAX_ITEM_PHOTOS. */
 const MAX_ITEM_PHOTOS = 4;
 import mongoose from "mongoose";
-import { getNextSequence } from "../../common/utils/counter.util";
-import { CounterModel } from "../../common/models/Counter.model";
-
-const ORDER_COUNTER_ID = "orders";
-let orderSequenceSyncPromise: Promise<void> | null = null;
-
-const ensureOrderCounterSynced = async () => {
-    if (orderSequenceSyncPromise) {
-        return orderSequenceSyncPromise;
-    }
-
-    const pipeline = [
-        {
-            $match: {
-                orderNumber: { $regex: "^ADV-\\d+" },
-            },
-        },
-        {
-            $project: {
-                numberParts: { $split: ["$orderNumber", "-"] },
-            },
-        },
-        {
-            $project: {
-                numericPart: {
-                    $toInt: { $arrayElemAt: ["$numberParts", 1] },
-                },
-            },
-        },
-        {
-            $group: {
-                _id: null,
-                max: { $max: "$numericPart" },
-            },
-        },
-    ];
-
-    orderSequenceSyncPromise = (async () => {
-        const [result] = await OrderModel.aggregate(pipeline);
-        const highestSequence = Number(result?.max || 0);
-
-        await CounterModel.findOneAndUpdate(
-            { id: ORDER_COUNTER_ID },
-            { $max: { seq: highestSequence } },
-            { upsert: true }
-        );
-    })();
-
-    try {
-        await orderSequenceSyncPromise;
-    } catch (error) {
-        orderSequenceSyncPromise = null;
-        throw error;
-    }
-};
+import { nextDocumentNumber } from "../../common/utils/documentNumber";
 
 export const OrderService = {
     /**
-     * Generate unique order number
+     * The next number in this shop's single document series — see
+     * documentNumber.ts. Orders and invoices share it, so an order is INV-n
+     * like everything else rather than carrying its own ADV-n sequence.
      */
-    async generateOrderNumber(userId: string): Promise<string> {
-        await ensureOrderCounterSynced();
-        const sequence = await getNextSequence(ORDER_COUNTER_ID);
-        const newNumber = `ADV-${sequence}`;
-        console.log(`[OrderService] Generated order number: ${newNumber} (user=${userId})`);
-        return newNumber;
+    async generateOrderNumber(userId: string, dukandarId?: string): Promise<string> {
+        return nextDocumentNumber(userId, dukandarId);
     },
 
     /**
@@ -104,7 +47,7 @@ export const OrderService = {
     ) {
 
         // Generate order number
-        const orderNumber = await this.generateOrderNumber(userId);
+        const orderNumber = await this.generateOrderNumber(userId, dukandarId);
 
         // Calculate initial payment details
         let payments: AdvancePayment[] = [];
@@ -129,7 +72,24 @@ export const OrderService = {
         }
 
         const totalWeight = payload.items.reduce((sum, item) => sum + item.weight, 0);
-        const remainingWeight = totalWeight - weightPaid;
+
+        /**
+         * Clamped, because `remainingWeight` has `min: 0` on the schema and
+         * Mongoose validates BEFORE this file's pre-save hook gets to run.
+         *
+         * The hook already computes this properly — from the fine-99.50 total
+         * rather than the raw item grams, and with its own Math.max(0, …) — but
+         * it never got the chance: Mongoose registers validation as a pre-save
+         * hook in the Schema constructor, so it runs ahead of every hook added
+         * afterwards and rejected the constructor's raw value first.
+         *
+         * That made any payment larger than the order fail to save at all, with
+         * "remainingWeight (-37.959…) is less than minimum allowed value (0)" —
+         * on a screen that had just said "Full payment". Overpaying is a normal
+         * thing to do at a counter, and it was the one thing that could not be
+         * recorded.
+         */
+        const remainingWeight = Math.max(0, totalWeight - weightPaid);
         const initialGoldRate = payload.initialPayment?.goldRate || payload.bookingRate || 0;
 
         // Advance orders always start as pending
@@ -150,17 +110,18 @@ export const OrderService = {
             remainingWeight,
             bookingRate: initialGoldRate,
             includeGST: payload.includeGST ?? true,
-            isOrnamentExchanges: payload.isOrnamentExchanges ?? false,
-            ornamentExchanges: payload.isOrnamentExchanges ? payload.ornamentExchanges : undefined,
             gstRate: payload.gstRate ?? 3,
             includeItemPhotosOnBill: payload.includeItemPhotosOnBill ?? false,
             status,
         });
         // estimatedBalance/amount/subTotal/gstAmount are computed in the
-        // pre-save hook (order.model.ts) from items + exchange + GST, and
+        // pre-save hook (order.model.ts) from items + GST, and
         // recomputed on every subsequent save (e.g. addPayment).
 
         await order.save();
+        // An order can be overpaid at the moment it is raised, so the surplus
+        // has to be swept here as well as on later payments.
+        await this.creditOverpayment(order, userId, dukandarId);
         return order.populate("customerId");
     },
 
@@ -217,6 +178,74 @@ export const OrderService = {
     },
 
     /**
+     * Turns anything paid beyond an order into credit on the retailer's account.
+     *
+     * Overpaying is ordinary at a counter — a retailer rounds up, or hands over
+     * a lump that covers this bill and starts on the next. Until now the
+     * surplus simply vanished: `remainingWeight` clamps at 0, so an order paid
+     * 10.0258 gm against a 10.000 gm total recorded the 0.0258 gm nowhere at
+     * all, and the shopkeeper had no record of owing it back.
+     *
+     * It lands in `heldCash` rather than being netted off the next bill,
+     * because that is the whole design of the retailer account: netting hides
+     * that the wholesaler is holding someone else's money, which is exactly
+     * what both sides need to see plainly. `cash/allocate` is what draws it
+     * down later, at the rate on the day it is allocated.
+     *
+     * Priced in RUPEES at the order's own rate. The surplus arises in grams,
+     * but a shopkeeper who overpays by Rs.400 expects to see Rs.400 — and
+     * pricing it at the rate the order was transacted at is the only rate both
+     * parties have already agreed to.
+     *
+     * `creditedExcessWeight` makes this idempotent: a second save of the same
+     * order credits only what has appeared since the last one, so re-saving an
+     * order or adding a further payment can never credit the same surplus twice.
+     *
+     * Deliberately best-effort. The payment itself is already recorded and the
+     * order is correct; failing the whole request because the credit could not
+     * be written would lose the payment to save the bookkeeping.
+     */
+    async creditOverpayment(order: any, userId: string, dukandarId?: string) {
+        const excess = (order.weightPaid || 0) - (order.totalWeight || 0);
+        const delta = excess - (order.creditedExcessWeight || 0);
+        if (delta <= WEIGHT_SETTLED_EPSILON_GM) return;
+
+        const rate = weightedItemRate(order.items, order.bookingRate) || order.bookingRate || 0;
+        if (rate <= 0) return;
+
+        const amount = Number((delta * rate).toFixed(2));
+        if (amount < 0.5) return;
+
+        try {
+            // Imported here rather than at the top of the file: the retailer
+            // account service imports THIS module, and a top-level import both
+            // ways is a require cycle whose loser resolves to undefined.
+            const { RetailerAccountService } = await import(
+                "../retailerAccount/retailerAccount.service"
+            );
+            await RetailerAccountService.receiveCash(
+                userId,
+                String(order.customerId?._id || order.customerId),
+                {
+                    amount,
+                    date: new Date(),
+                    notes: `Overpaid on ${order.orderNumber || "order"}`,
+                },
+                dukandarId,
+            );
+
+            order.creditedExcessWeight = excess;
+            await order.save();
+        } catch (err) {
+            console.warn(
+                "[OrderService] could not credit overpayment on",
+                order.orderNumber,
+                err instanceof Error ? err.message : err,
+            );
+        }
+    },
+
+    /**
      * Add payment to an order
      */
     async addPayment(
@@ -233,7 +262,14 @@ export const OrderService = {
 
         console.log('[OrderService] addPayment payload:', JSON.stringify(payload, null, 2));
 
-        const weightCovered = payload.goldRate > 0 ? (payload.amount / payload.goldRate) : 0;
+        const settles = payload.settles || "metal";
+
+        // Only cash aimed at metal converts to grams. Cash clearing the charges
+        // account buys no weight, so it carries none.
+        const weightCovered =
+            settles !== "cash" && payload.goldRate > 0
+                ? (payload.amount / payload.goldRate)
+                : 0;
 
         // Add new payment
         order.payments.push({
@@ -241,6 +277,9 @@ export const OrderService = {
             amount: payload.amount || 0,
             goldRate: payload.goldRate || 0,
             weightCovered,
+            goldWeight: payload.goldWeight,
+            goldPurity: payload.goldPurity,
+            settles,
             paymentType: payload.paymentType || "advance",
             notes: payload.notes,
         });
@@ -248,13 +287,26 @@ export const OrderService = {
         // Recalculate totals (pre-save hook will handle this)
         await order.save();
 
-        // Check if order is fully paid. Compared with a tolerance because
-        // weightPaid is no longer rounded to 3dp — see WEIGHT_SETTLED_EPSILON_GM.
-        if (order.totalWeight - order.weightPaid < WEIGHT_SETTLED_EPSILON_GM) {
+        // An order is finished only when BOTH accounts are clear. Completing on
+        // settled metal alone would close orders that still owe making charges
+        // and GST, and closing zeroes both balances — the debt would not just be
+        // hidden, it would be erased.
+        //
+        // Weight is compared with a tolerance because weightPaid is not rounded
+        // to 3dp — see WEIGHT_SETTLED_EPSILON_GM.
+        const metalSettled = order.totalWeight - order.weightPaid < WEIGHT_SETTLED_EPSILON_GM;
+        const cashSettled = (order.outstandingCash || 0) <= 0;
+
+        if (metalSettled && cashSettled) {
             order.status = "completed";
             order.completedAt = new Date();
             await order.save();
         }
+
+        // After the status write, so a payment that both settles and overpays
+        // records the surplus against a completed order rather than a pending
+        // one — which is what the retailer's statement then reads.
+        await this.creditOverpayment(order, userId, dukandarId);
 
         return order.populate("customerId");
     },
@@ -501,11 +553,8 @@ export const OrderService = {
             throw new AppError("Order not found", { statusCode: 404, code: "NOT_FOUND" });
         }
 
-        // Same reasoning as deleteInvoice: retire the attached declaration
-        // rather than leave it live and unreachable. See declarationLifecycle.
         const fileIds = collectPhotoFileIds(order.toObject ? order.toObject() : order);
 
-        await retireDeclarationFor(userId, order._id);
         await OrderModel.deleteOne({ _id: order._id });
 
         // After the row, never before — see deleteInvoice.
@@ -535,91 +584,6 @@ export const OrderService = {
         if (!order) {
             throw new AppError("Order not found", { statusCode: 404, code: "NOT_FOUND" });
         }
-        return order;
-    },
-
-    /**
-     * Attaches photos of the old ornaments taken in against an order.
-     *
-     * Reuses uploadOrnamentPhoto (unique filenames, 1024px) rather than
-     * uploadImage, which pins one filename per category and would make each
-     * photo overwrite the last.
-     */
-    async addOrnamentPhotos(userId: string, orderId: string, files: any[]) {
-        if (!Types.ObjectId.isValid(orderId)) return null;
-
-        const order = await OrderModel.findOne({
-            _id: new Types.ObjectId(orderId),
-            userId: new Types.ObjectId(userId),
-            deletedAt: null,
-        });
-        if (!order) return null;
-
-        const existing = order.ornamentPhotos || [];
-        const remaining = MAX_ORNAMENT_PHOTOS - existing.length;
-        if (remaining <= 0) {
-            throw new AppError(
-                `An order can hold at most ${MAX_ORNAMENT_PHOTOS} ornament photos`,
-                { statusCode: 400, code: "BAD_REQUEST" }
-            );
-        }
-
-        const shop = await ShopDetail.findOne({ userId }).lean();
-        const storageKey = shop?.phone ? String(shop.phone) : userId;
-
-        const uploaded: { url: string; fileId: string }[] = [];
-        for (const file of files.slice(0, remaining)) {
-            const result = await uploadOrnamentPhoto(
-                file,
-                storageKey,
-                "orders",
-                order.orderNumber || String(order._id)
-            );
-            uploaded.push({ url: result.url, fileId: result.fileId });
-        }
-
-        // Atomic for the same reason as addItemPhotos below: this and the item
-        // upload race, and whichever wrote second used to lose its photos to a
-        // version conflict.
-        const updated = await OrderModel.findOneAndUpdate(
-            { _id: order._id, userId: new Types.ObjectId(userId), deletedAt: null },
-            { $set: { ornamentPhotos: [...existing, ...uploaded] } },
-            { new: true },
-        );
-        return updated;
-    },
-
-    /**
-     * Drops one ornament photo from an order.
-     *
-     * Mirrors PurchaseOldGoldService.removePhoto, including the best-effort
-     * remote cleanup: `deleteImageByFileId` swallows its own failures because
-     * the database reference is what the shopkeeper actually sees, and an
-     * orphaned file in ImageKit is invisible to them.
-     */
-    async removeOrnamentPhoto(userId: string, orderId: string, fileId: string) {
-        if (!Types.ObjectId.isValid(orderId)) return null;
-
-        const order = await OrderModel.findOne({
-            _id: new Types.ObjectId(orderId),
-            userId: new Types.ObjectId(userId),
-            deletedAt: null,
-        });
-        if (!order) return null;
-
-        const before = (order.ornamentPhotos || []).length;
-        order.ornamentPhotos = (order.ornamentPhotos || []).filter(
-            (p: any) => p.fileId !== fileId
-        ) as any;
-        if ((order.ornamentPhotos || []).length === before) {
-            throw new AppError("Photo not found", {
-                statusCode: 404,
-                code: "NOT_FOUND",
-            });
-        }
-
-        await order.save();
-        await deletePhotoIfUnreferenced(userId, fileId);
         return order;
     },
 
@@ -689,119 +653,8 @@ export const OrderService = {
         );
         return updated;
     },
-
-/**
-     * Photos of ONE ornament taken in on this orders.
-     *
-     * Distinct from ornamentPhotos, which is a single set for the exchange as
-     * a whole - how every exchange was recorded before this existed. Those stay
-     * where they are and keep displaying; new photos are attached to the gold or
-     * silver row they are actually of, which is the only question a photo of an
-     * ornament exists to answer.
-     *
-     * Addressed by index, like invoice items and for the same reason: exchange
-     * rows carry no _id. ornamentExchanges is a Mixed path, so photos need no
-     * schema change - and they are never accepted from the create payload, only
-     * written here.
-     */
-    async addExchangePhotos(
-        userId: string,
-        recordId: string,
-        exchangeIndex: number,
-        files: any[],
-    ) {
-        if (!Types.ObjectId.isValid(recordId)) return null;
-
-        const record = await OrderModel.findOne({
-            _id: new Types.ObjectId(recordId),
-            userId: new Types.ObjectId(userId),
-            deletedAt: null,
-        });
-        if (!record) return null;
-
-        const rows = (record.ornamentExchanges || []) as any[];
-        const row = rows[exchangeIndex];
-        if (!Number.isInteger(exchangeIndex) || exchangeIndex < 0 || !row) {
-            throw new AppError("Exchange row not found on this record", {
-                statusCode: 400,
-                code: "BAD_REQUEST",
-            });
-        }
-
-        const existing = (row.photos || []) as { url: string; fileId: string }[];
-        const remaining = MAX_ITEM_PHOTOS - existing.length;
-        if (remaining <= 0) {
-            throw new AppError(
-                `An ornament can hold at most ${MAX_ITEM_PHOTOS} photos`,
-                { statusCode: 400, code: "BAD_REQUEST" },
-            );
-        }
-
-        const shop = await ShopDetail.findOne({ userId }).lean();
-        const storageKey = shop?.phone ? String(shop.phone) : userId;
-
-        const uploaded: { url: string; fileId: string }[] = [];
-        for (const file of files.slice(0, remaining)) {
-            const result = await uploadOrnamentPhoto(
-                file,
-                storageKey,
-                "orders",
-                (record as any).invoiceNumber || (record as any).orderNumber || String(record._id),
-                `exchanges/${exchangeIndex}`,
-            );
-            uploaded.push({ url: result.url, fileId: result.fileId });
-        }
-
-        // Atomic $set on the exact path, like the item and ornament writes -
-        // see addItemPhotos for why doc.save() loses concurrent photo uploads.
-        return OrderModel.findOneAndUpdate(
-            { _id: record._id, userId: new Types.ObjectId(userId), deletedAt: null },
-            { $set: { [`ornamentExchanges.${exchangeIndex}.photos`]: [...existing, ...uploaded] } },
-            { new: true },
-        );
-    },
-
     /** Best-effort remote delete, like removeItemPhoto: the stored reference is
      *  what the shopkeeper actually sees. */
-    async removeExchangePhoto(
-        userId: string,
-        recordId: string,
-        exchangeIndex: number,
-        fileId: string,
-    ) {
-        if (!Types.ObjectId.isValid(recordId)) return null;
-
-        const record = await OrderModel.findOne({
-            _id: new Types.ObjectId(recordId),
-            userId: new Types.ObjectId(userId),
-            deletedAt: null,
-        });
-        if (!record) return null;
-
-        const rows = (record.ornamentExchanges || []) as any[];
-        const row = rows[exchangeIndex];
-        if (!row) {
-            throw new AppError("Exchange row not found on this record", {
-                statusCode: 400,
-                code: "BAD_REQUEST",
-            });
-        }
-
-        const existing = (row.photos || []) as { url: string; fileId: string }[];
-        const next = existing.filter(p => p.fileId !== fileId);
-        if (next.length === existing.length) {
-            throw new AppError("Photo not found", { statusCode: 404, code: "NOT_FOUND" });
-        }
-
-        const updated = await OrderModel.findOneAndUpdate(
-            { _id: record._id, userId: new Types.ObjectId(userId), deletedAt: null },
-            { $set: { [`ornamentExchanges.${exchangeIndex}.photos`]: next } },
-            { new: true },
-        );
-
-        await deletePhotoIfUnreferenced(userId, fileId);
-        return updated;
-    },
 
     async removeItemPhoto(userId: string, orderId: string, itemIndex: number, fileId: string) {
         if (!Types.ObjectId.isValid(orderId)) return null;

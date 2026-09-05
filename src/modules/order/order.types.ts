@@ -1,5 +1,4 @@
 import { Types } from "mongoose";
-import type { OrnamentExchangeItem } from "../invoice/invoice.types";
 
 export interface AdvancePayment {
     _id?: Types.ObjectId;
@@ -9,6 +8,31 @@ export interface AdvancePayment {
     weightCovered: number; // Weight covered by this payment in grams
     paymentType?: "advance" | "final";
     notes?: string;
+
+    /**
+     * Metal handed over as this payment, as weighed (gross grams).
+     *
+     * A retailer settles in gold, in cash, or in both, so one payment can carry
+     * a rupee `amount` and a `goldWeight` at the same time.
+     */
+    goldWeight?: number;
+    /** Purity of that metal in percent — 91.6 for 22K, 99.5 for 24K. */
+    goldPurity?: number;
+    /** Server-computed: goldWeight * goldPurity / 100. */
+    fineWeight?: number;
+
+    /**
+     * Which account this payment's CASH settles.
+     *
+     * "metal" buys gold down at `goldRate` — the advance-booking behaviour,
+     * where paying cash locks grams at the rate of the day. "cash" pays off the
+     * charges account instead (making, other charges, GST), which is money owed
+     * as money and never converts to metal.
+     *
+     * Defaults to "metal" because that is what an advance payment has always
+     * meant here; a payment that is meant to clear charges has to say so.
+     */
+    settles?: "metal" | "cash";
 }
 
 export type OrderStatus = "pending" | "completed" | "cancelled";
@@ -16,22 +40,21 @@ export type PaymentMode = "complete" | "advance";
 
 export interface OrderItem {
     itemName: string;
-    itemType: "Gold" | "Silver";
-    purity: string;
+    /** As weighed, in grams. Not what the retailer is charged for. */
     weight: number;
-    grossWeight?: number;
-    lessWeight?: number;
+    /** Purity as entered, in percent — 91.6 for 22K. Uplift applied on top. */
+    purity: number;
+    /** Wastage / Tunch in percent, ADDED to the charged purity. */
+    wastage?: number;
+    /** Rupees per gram of 99.50 fine. */
     rate?: number;
-    makingChargeType: "Per Gram" | "%" | "Fix";
-    makingChargeValue: number;
-    chargeDescription?: string;
-    chargeAmount?: number;
-    discountType?: string;
-    discount?: number;
-    /**
-     * Optional photos of the item being made/sold. Distinct from
-     * `Order.ornamentPhotos`, which are the old ornaments taken IN.
-     */
+
+    /** Derived server-side — see goldPricing.ts. Stored so a bill reprints. */
+    chargedPurity?: number;
+    fine999?: number;
+    fine995?: number;
+
+    /** Optional photos of the item being made/sold. */
     photos?: { url: string; fileId: string }[];
 }
 
@@ -57,22 +80,42 @@ export interface Order {
     payments: AdvancePayment[];
     totalPaid: number;
     weightPaid: number;
+    /**
+     * The METAL account: grams the retailer still owes.
+     *
+     * One of the two independent balances an order carries. Metal is owed as
+     * metal — it is settled by handing gold back, or bought out with cash at an
+     * agreed rate — so it is tracked in grams and never silently priced into
+     * rupees. See `outstandingCash` for the other half.
+     */
     remainingWeight: number;
+    /** Grams of excess already turned into retailer credit — see the model. */
+    creditedExcessWeight: number;
+    /** Cash received against the charges account. */
+    cashPaid: number;
+    /**
+     * The CASH account: rupees the retailer still owes.
+     *
+     * Making charges, other charges and GST are owed as money, not as metal,
+     * so they are held apart from `remainingWeight` rather than converted into
+     * grams. A retailer can owe metal and cash independently, and settling one
+     * does not touch the other.
+     */
+    outstandingCash: number;
+    /**
+     * Both accounts expressed as one rupee figure, at today's rate:
+     * `remainingWeight * rate + outstandingCash`.
+     *
+     * A convenience for printing and for "what would it cost to close this
+     * today", NOT a third balance — adding it to either account double-counts.
+     */
     estimatedBalance: number;
     estimatedMakingCharges?: number;
     bookingRate: number;
-    amount?: number; // Total estimated value (Gold + Making + GST - Exchange)
+    amount?: number; // Total estimated value (Gold + Making + GST)
     initialTotalWeight?: number;
 
     includeGST: boolean;
-    isOrnamentExchanges: boolean;
-    ornamentExchanges?: OrnamentExchangeItem[];
-    /** Grams the old gold settled — counts toward weightPaid like a payment does. */
-    exchangeWeightCovered?: number;
-    /** Surplus owed back to the customer when old gold exceeds the order value. */
-    exchangeExcess?: number;
-    /** Photos of the old ornaments taken in against this order. */
-    ornamentPhotos?: { url: string; fileId: string }[];
 
     /**
      * Whether item photos are printed on the customer's copy. Off by default and
@@ -102,8 +145,6 @@ export interface CreateOrderDTO {
     paymentMode: PaymentMode;
     bookingRate?: number;
     includeGST?: boolean;
-    isOrnamentExchanges?: boolean;
-    ornamentExchanges?: OrnamentExchangeItem[];
     gstRate?: number;
     /** Print item photos on the customer's copy. Defaults to false. */
     includeItemPhotosOnBill?: boolean;
@@ -115,8 +156,16 @@ export interface CreateOrderDTO {
 }
 
 export interface AddPaymentDTO {
+    /** Cash received. Zero when the retailer settled purely in metal. */
     amount: number;
+    /** Rate the cash bought metal at. Not needed when `settles` is "cash". */
     goldRate: number;
+    /** Metal received, as weighed (gross grams). */
+    goldWeight?: number;
+    /** Purity of that metal in percent. */
+    goldPurity?: number;
+    /** Which account the cash settles — see AdvancePayment. */
+    settles?: "metal" | "cash";
     date?: Date;
     paymentType?: "advance" | "final";
     notes?: string;

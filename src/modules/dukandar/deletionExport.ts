@@ -8,7 +8,6 @@ import { ShopDetail } from "../shopDetail/shopDetails.model";
 import { CustomerModel } from "../customer/customer.model";
 import { InvoiceModel } from "../invoice/invoice.model";
 import { OrderModel } from "../order/order.model";
-import { PurchaseOldGoldModel } from "../purchaseOldGold/purchaseOldGold.model";
 import { CommunicationLogModel } from "../communication/communication.model";
 import { CatalogProductModel } from "../catalogProduct/catalogProduct.model";
 import { PurchaseModel } from "../purchase/purchase.model";
@@ -42,7 +41,6 @@ export interface ShopDataCounts {
     customers: number;
     invoices: number;
     orders: number;
-    purchaseOldGold: number;
     communications: number;
     catalogProducts: number;
     purchases: number;
@@ -74,20 +72,18 @@ export const hasRealData = (c: ShopDataCounts): boolean =>
     c.customers > 0 ||
     c.invoices > 0 ||
     c.orders > 0 ||
-    c.purchaseOldGold > 0 ||
     c.purchases > 0 ||
     c.catalogProducts > 0;
 
 export const countShopData = async (id: string): Promise<ShopDataCounts> => {
     const oid = new Types.ObjectId(id);
     const [
-        customers, invoices, orders, purchaseOldGold, communications,
+        customers, invoices, orders, communications,
         catalogProducts, purchases, items, metalRates,
     ] = await Promise.all([
         CustomerModel.countDocuments({ dukandarId: oid }),
         InvoiceModel.countDocuments({ userId: oid }),
         OrderModel.countDocuments({ userId: oid }),
-        PurchaseOldGoldModel.countDocuments({ userId: oid }),
         CommunicationLogModel.countDocuments({ dukandarId: oid }),
         CatalogProductModel.countDocuments({ dukandarId: oid }),
         PurchaseModel.countDocuments({ userId: oid }),
@@ -95,7 +91,7 @@ export const countShopData = async (id: string): Promise<ShopDataCounts> => {
         MetalRateModel.countDocuments({ dukandarId: oid }),
     ]);
     return {
-        customers, invoices, orders, purchaseOldGold, communications,
+        customers, invoices, orders, communications,
         catalogProducts, purchases, items, metalRates,
     };
 };
@@ -127,7 +123,7 @@ export const exportShopBeforeDelete = async (id: string): Promise<ShopExport> =>
     const shopDetailsId = (dukandar.shopDetails as { _id?: Types.ObjectId } | undefined)?._id;
 
     const [
-        shopDetails, customers, invoices, orders, purchaseOldGold, communications, appOpenLogs,
+        shopDetails, customers, invoices, orders, communications, appOpenLogs,
         catalogProducts, purchases, items, metalRates,
     ] =
         await Promise.all([
@@ -135,7 +131,6 @@ export const exportShopBeforeDelete = async (id: string): Promise<ShopExport> =>
             CustomerModel.find({ dukandarId: oid }).lean(),
             InvoiceModel.find({ userId: oid }).lean(),
             OrderModel.find({ userId: oid }).lean(),
-            PurchaseOldGoldModel.find({ userId: oid }).lean(),
             CommunicationLogModel.find({ dukandarId: oid }).lean(),
             AppOpenLog.find({ dukandarId: oid }).lean(),
             // Added 26 Aug 2026 with the cascade that finally deletes these.
@@ -150,7 +145,6 @@ export const exportShopBeforeDelete = async (id: string): Promise<ShopExport> =>
         customers: customers.length,
         invoices: invoices.length,
         orders: orders.length,
-        purchaseOldGold: purchaseOldGold.length,
         communications: communications.length,
         catalogProducts: catalogProducts.length,
         purchases: purchases.length,
@@ -175,7 +169,6 @@ export const exportShopBeforeDelete = async (id: string): Promise<ShopExport> =>
             customers,
             invoices,
             orders,
-            purchaseOldGold,
             communications,
             appOpenLogs,
             catalogProducts,

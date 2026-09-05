@@ -46,18 +46,4 @@ router.delete(
   InvoiceController.removeItemPhoto
 );
 
-// Photos of ONE ornament taken in against this record. Separate from
-// /ornament-photos, which is a single set for the exchange as a whole and is
-// how every exchange was recorded before this - those stay and keep working.
-// Addressed by index, like items, because exchange rows carry no _id.
-router.post(
-  "/:id/exchanges/:exchangeIndex/photos",
-  upload.array("photos", 4),
-  InvoiceController.addExchangePhotos
-);
-router.delete(
-  "/:id/exchanges/:exchangeIndex/photos/:fileId",
-  InvoiceController.removeExchangePhoto
-);
-
 export default router;

@@ -4,13 +4,11 @@ import type {
   CreateInvoiceDTO,
   UpdateInvoiceDTO,
   InvoiceItem,
-  OrnamentExchangeItem,
 } from "./invoice.types";
 import { AppError } from "../../common/errors/AppError";
 import { CustomerModel } from "../customer/customer.model";
 import { CustomerService } from "../customer/customer.service";
 import { ItemModel } from "../item/item.model";
-import { retireDeclarationFor } from "../../common/utils/declarationLifecycle";
 import { ShopDetail } from "../shopDetail/shopDetails.model";
 import { getNextSequence } from "../../common/utils/counter.util";
 import { splitGstAmount, DEFAULT_HSN_CODE } from "./invoice.gst";
@@ -25,84 +23,6 @@ const DEFAULT_GST_RATE = 0.03;
 const MAX_ORNAMENT_PHOTOS = 6;
 /** Per item, not per bill — a four-item invoice can hold 16 item photos. */
 const MAX_ITEM_PHOTOS = 4;
-
-// Validates and numerically-coerces a submitted ornamentExchanges array.
-// `amount` is the only mandatory field per row; everything else describing
-// the exchanged item (name, weights, purity, rate) is optional detail.
-function normalizeOrnamentExchangeItems(
-  items: OrnamentExchangeItem[] | undefined
-): OrnamentExchangeItem[] {
-  if (!Array.isArray(items)) {
-    throw new AppError("Ornament exchanges details are required", {
-      statusCode: 400,
-      code: "VALIDATION_ERROR",
-    });
-  }
-  // An empty array is valid — it just means the exchange toggle was on but
-  // no rows were added; it contributes nothing to the ornament offset.
-  if (items.length === 0) return [];
-
-  return items.map((item) => {
-    const amount = Number(item.amount);
-    if (item.type !== "Gold" && item.type !== "Silver") {
-      throw new AppError("Each ornament exchange must have a valid type", {
-        statusCode: 400,
-        code: "VALIDATION_ERROR",
-      });
-    }
-    if (!Number.isFinite(amount)) {
-      throw new AppError(
-        "Each ornament exchange must have a numeric total amount",
-        {
-          statusCode: 400,
-          code: "VALIDATION_ERROR",
-        }
-      );
-    }
-
-    const grossWeight =
-      item.grossWeight !== undefined ? Number(item.grossWeight) : undefined;
-    const lessWeight =
-      item.lessWeight !== undefined ? Number(item.lessWeight) : undefined;
-    const ratePerGram =
-      item.ratePerGram !== undefined ? Number(item.ratePerGram) : undefined;
-    const netWeight =
-      grossWeight !== undefined
-        ? grossWeight - (lessWeight ?? 0)
-        : item.netWeight !== undefined
-        ? Number(item.netWeight)
-        : undefined;
-
-    return {
-      type: item.type,
-      itemName: item.itemName?.trim() || undefined,
-      grossWeight,
-      lessWeight,
-      netWeight,
-      purity: item.purity?.trim() || undefined,
-      ratePerGram,
-      amount,
-    };
-  });
-}
-
-// `items` is normally an OrnamentExchangeItem[], but invoices created before
-// this extension (and never re-saved) still carry the legacy
-// {gold: {amount}, silver: {amount}} aggregate shape in the DB — since we're
-// not migrating old data, this must keep summing correctly either way.
-function sumOrnamentExchangeAmount(items?: unknown): number {
-  if (Array.isArray(items)) {
-    return items.reduce(
-      (sum, item) => sum + (Number((item as OrnamentExchangeItem)?.amount) || 0),
-      0
-    );
-  }
-  if (items && typeof items === "object") {
-    const legacy = items as { gold?: { amount?: number }; silver?: { amount?: number } };
-    return (Number(legacy.gold?.amount) || 0) + (Number(legacy.silver?.amount) || 0);
-  }
-  return 0;
-}
 
 export const InvoiceService = {
   /**
@@ -138,13 +58,6 @@ export const InvoiceService = {
         netWeight,
       };
     });
-
-    let ornamentExchanges: OrnamentExchangeItem[] | undefined;
-    if (payload.isOrnamentExchanges) {
-      ornamentExchanges = normalizeOrnamentExchangeItems(
-        payload.ornamentExchanges
-      );
-    }
 
     const itemsTotal = normalizedItems.reduce((sum, item) => {
       const netWeight = item.netWeight;
@@ -183,12 +96,7 @@ export const InvoiceService = {
       return sum + lineTotal;
     }, 0);
 
-    const ornamentOffset =
-      payload.isOrnamentExchanges && ornamentExchanges
-        ? sumOrnamentExchangeAmount(ornamentExchanges)
-        : 0;
-
-    const subTotal = Math.max(itemsTotal - ornamentOffset, 0);
+    const subTotal = Math.max(itemsTotal, 0);
 
     // Derived here, not taken from the client.
     //
@@ -207,7 +115,7 @@ export const InvoiceService = {
       : 0;
     const totalAmount = subTotal + gstAmount;
 
-    return { normalizedItems, ornamentExchanges, subTotal, gstAmount, totalAmount };
+    return { normalizedItems, subTotal, gstAmount, totalAmount };
   },
 
   async createInvoice(
@@ -233,7 +141,7 @@ export const InvoiceService = {
     const shop = await ShopDetail.findOne({ userId }).lean();
     const gstRate = payload.gstRate ?? shop?.gstPercentage ?? DEFAULT_GST_RATE * 100;
 
-    const { normalizedItems, ornamentExchanges, subTotal, gstAmount, totalAmount } =
+    const { normalizedItems, subTotal, gstAmount, totalAmount } =
       this.calculateInvoiceDetails(payload, gstRate);
 
     const invoiceDate =
@@ -273,8 +181,6 @@ export const InvoiceService = {
           invoiceDate,
           invoiceNumber: payload.invoiceNumber,
           items: itemsWithHsn,
-          isOrnamentExchanges: payload.isOrnamentExchanges,
-          ornamentExchanges,
           includeGST: payload.includeGST,
           subTotal,
           gstAmount,
@@ -468,35 +374,7 @@ export const InvoiceService = {
       });
     }
 
-    let ornamentExchanges: OrnamentExchangeItem[] | undefined;
-    if (payload.isOrnamentExchanges !== undefined && payload.isOrnamentExchanges) {
-      ornamentExchanges = normalizeOrnamentExchangeItems(
-        payload.ornamentExchanges
-      );
-      // Exchange photos live on the row and are never sent in the payload,
-      // so an edit that resends the exchange list would drop them - exactly
-      // the way item photos would without the carry-across below. Same
-      // handle, the row index, and a resent row carrying its own photos
-      // wins.
-      const storedRows = (existingInvoice.ornamentExchanges || []) as any[];
-      ornamentExchanges = ornamentExchanges.map((row: any, index: number) => {
-        if (row.photos !== undefined) return row;
-        const previous = storedRows[index];
-        return previous?.photos?.length
-          ? { ...row, photos: previous.photos }
-          : row;
-      });
-    } else if (payload.isOrnamentExchanges === false) {
-      ornamentExchanges = undefined;
-    } else {
-      ornamentExchanges = existingInvoice.ornamentExchanges;
-    }
-
     const itemsToUse = normalizedItems || existingInvoice.items;
-    const isOrnamentExchanges =
-      payload.isOrnamentExchanges !== undefined
-        ? payload.isOrnamentExchanges
-        : existingInvoice.isOrnamentExchanges;
     const includeGST =
       payload.includeGST !== undefined ? payload.includeGST : existingInvoice.includeGST;
 
@@ -532,12 +410,7 @@ export const InvoiceService = {
       return sum + lineTotal;
     }, 0);
 
-    const ornamentOffset =
-      isOrnamentExchanges && ornamentExchanges
-        ? sumOrnamentExchangeAmount(ornamentExchanges)
-        : 0;
-
-    const subTotal = Math.max(itemsTotal - ornamentOffset, 0);
+    const subTotal = Math.max(itemsTotal, 0);
     // Same rule as creation: derived from the recomputed subTotal, not
     // taken from the client. An edit that changed an item discount would
     // otherwise move subTotal and leave the tax on it untouched.
@@ -565,7 +438,6 @@ export const InvoiceService = {
 
     const updateData: any = {
       invoiceDate,
-      isOrnamentExchanges,
       includeGST,
       subTotal,
       gstAmount,
@@ -586,10 +458,6 @@ export const InvoiceService = {
         ...item,
         hsnCode: item.hsnCode?.trim() || DEFAULT_HSN_CODE,
       }));
-    }
-
-    if (payload.isOrnamentExchanges !== undefined) {
-      updateData.ornamentExchanges = ornamentExchanges;
     }
 
     if (payload.paymentMethod !== undefined) {
@@ -675,13 +543,9 @@ export const InvoiceService = {
 
     await ItemModel.deleteMany({ invoiceId: new Types.ObjectId(invoiceId) });
     await CustomerService.detachInvoice(invoice.customerId, invoice._id);
-    await retireDeclarationFor(userId, invoice._id);
     await InvoiceModel.findByIdAndDelete(invoiceId);
 
-    // Item and ornament photographs. Each is dropped only if nothing else still
-    // points at it — a declaration written against this bill's exchange
-    // references the same files, and it is retired rather than destroyed, so
-    // its evidence keeps the images alive on purpose.
+    // Item photographs. Each is dropped only if nothing else still points at it.
     await releasePhotos(userId, fileIds);
 
     return invoice;
@@ -868,119 +732,6 @@ export const InvoiceService = {
 
   /** Mirrors removeOrnamentPhoto: the remote delete is best-effort, since the
    *  database reference is what the shopkeeper actually sees. */
-/**
-   * Photos of ONE ornament taken in on this invoices.
-   *
-   * Distinct from ornamentPhotos, which is a single set for the exchange as
-   * a whole - how every exchange was recorded before this existed. Those stay
-   * where they are and keep displaying; new photos are attached to the gold or
-   * silver row they are actually of, which is the only question a photo of an
-   * ornament exists to answer.
-   *
-   * Addressed by index, like invoice items and for the same reason: exchange
-   * rows carry no _id. ornamentExchanges is a Mixed path, so photos need no
-   * schema change - and they are never accepted from the create payload, only
-   * written here.
-   */
-  async addExchangePhotos(
-      userId: string,
-      recordId: string,
-      exchangeIndex: number,
-      files: any[],
-  ) {
-      if (!Types.ObjectId.isValid(recordId)) return null;
-
-      const record = await InvoiceModel.findOne({
-          _id: new Types.ObjectId(recordId),
-          userId: new Types.ObjectId(userId),
-          deletedAt: null,
-      });
-      if (!record) return null;
-
-      const rows = (record.ornamentExchanges || []) as any[];
-      const row = rows[exchangeIndex];
-      if (!Number.isInteger(exchangeIndex) || exchangeIndex < 0 || !row) {
-          throw new AppError("Exchange row not found on this record", {
-              statusCode: 400,
-              code: "BAD_REQUEST",
-          });
-      }
-
-      const existing = (row.photos || []) as { url: string; fileId: string }[];
-      const remaining = MAX_ITEM_PHOTOS - existing.length;
-      if (remaining <= 0) {
-          throw new AppError(
-              `An ornament can hold at most ${MAX_ITEM_PHOTOS} photos`,
-              { statusCode: 400, code: "BAD_REQUEST" },
-          );
-      }
-
-      const shop = await ShopDetail.findOne({ userId }).lean();
-      const storageKey = shop?.phone ? String(shop.phone) : userId;
-
-      const uploaded: { url: string; fileId: string }[] = [];
-      for (const file of files.slice(0, remaining)) {
-          const result = await uploadOrnamentPhoto(
-              file,
-              storageKey,
-              "invoices",
-              (record as any).invoiceNumber || (record as any).orderNumber || String(record._id),
-              `exchanges/${exchangeIndex}`,
-          );
-          uploaded.push({ url: result.url, fileId: result.fileId });
-      }
-
-      // Atomic $set on the exact path, like the item and ornament writes -
-      // see addItemPhotos for why doc.save() loses concurrent photo uploads.
-      return InvoiceModel.findOneAndUpdate(
-          { _id: record._id, userId: new Types.ObjectId(userId), deletedAt: null },
-          { $set: { [`ornamentExchanges.${exchangeIndex}.photos`]: [...existing, ...uploaded] } },
-          { new: true },
-      );
-  },
-
-  /** Best-effort remote delete, like removeItemPhoto: the stored reference is
-   *  what the shopkeeper actually sees. */
-  async removeExchangePhoto(
-      userId: string,
-      recordId: string,
-      exchangeIndex: number,
-      fileId: string,
-  ) {
-      if (!Types.ObjectId.isValid(recordId)) return null;
-
-      const record = await InvoiceModel.findOne({
-          _id: new Types.ObjectId(recordId),
-          userId: new Types.ObjectId(userId),
-          deletedAt: null,
-      });
-      if (!record) return null;
-
-      const rows = (record.ornamentExchanges || []) as any[];
-      const row = rows[exchangeIndex];
-      if (!row) {
-          throw new AppError("Exchange row not found on this record", {
-              statusCode: 400,
-              code: "BAD_REQUEST",
-          });
-      }
-
-      const existing = (row.photos || []) as { url: string; fileId: string }[];
-      const next = existing.filter(p => p.fileId !== fileId);
-      if (next.length === existing.length) {
-          throw new AppError("Photo not found", { statusCode: 404, code: "NOT_FOUND" });
-      }
-
-      const updated = await InvoiceModel.findOneAndUpdate(
-          { _id: record._id, userId: new Types.ObjectId(userId), deletedAt: null },
-          { $set: { [`ornamentExchanges.${exchangeIndex}.photos`]: next } },
-          { new: true },
-      );
-
-      await deletePhotoIfUnreferenced(userId, fileId);
-      return updated;
-  },
-
   async removeItemPhoto(
     userId: string,
     invoiceId: string,

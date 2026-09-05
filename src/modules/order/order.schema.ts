@@ -1,21 +1,14 @@
 import { z } from "zod";
-import { ornamentExchangeItemSchema, ornamentExchangesSchema } from "../invoice/invoice.schema";
 import { INPUT_LIMITS } from "../../common/constants/inputLimits";
 
 export const createOrderItemSchema = z.object({
     itemName: z.string().min(1, "Item name is required").max(INPUT_LIMITS.itemName, `Item name must be ${INPUT_LIMITS.itemName} characters or less`),
-    itemType: z.enum(["Gold", "Silver"]),
-    purity: z.string().min(1, "Purity is required"),
     weight: z.number().min(0, "Weight must be positive"),
-    grossWeight: z.number().min(0).optional(),
-    lessWeight: z.number().min(0).optional(),
+    // Percent, not a karat string. 91.6, not "22K" — the uplift needs a number
+    // to floor, and a karat label cannot express the odd purities that turn up.
+    purity: z.number().min(0, "Purity is required").max(100, "Purity cannot exceed 100"),
+    wastage: z.number().min(0).optional().default(0),
     rate: z.number().min(0).optional(),
-    makingChargeType: z.enum(["Per Gram", "%", "Fix"]),
-    makingChargeValue: z.number().min(0, "Making charge value must be positive"),
-    chargeDescription: z.string().max(INPUT_LIMITS.itemDescription, `Charge description must be ${INPUT_LIMITS.itemDescription} characters or less`).optional().or(z.literal("")),
-    chargeAmount: z.number().optional().default(0),
-    discountType: z.string().optional().default("Fixed"),
-    discount: z.number().optional().default(0),
 });
 
 export const createOrderSchema = z.object({
@@ -26,8 +19,6 @@ export const createOrderSchema = z.object({
     paymentMode: z.enum(["advance", "complete"]),
     bookingRate: z.number().optional(),
     includeGST: z.boolean().default(true),
-    isOrnamentExchanges: z.boolean().default(false),
-    ornamentExchanges: z.array(ornamentExchangeItemSchema).optional(),
     gstRate: z.number().min(0).max(100).optional(),
     // Photos arrive later over multipart, once items have indices; only the
     // print preference is set at creation.
@@ -40,13 +31,27 @@ export const createOrderSchema = z.object({
 });
 
 export const addPaymentSchema = z.object({
-    amount: z.number().min(1, "Amount must be at least 1"),
-    goldRate: z.number().min(1, "Gold rate is required"),
+    // A retailer settles in cash, in gold, or in both, so neither leg is
+    // required on its own — but a payment of nothing is not a payment, which
+    // the refinement below enforces.
+    amount: z.number().min(0).default(0),
+    goldRate: z.number().min(0).default(0),
+    goldWeight: z.number().min(0).optional(),
+    goldPurity: z.number().min(0).max(100).optional(),
+    settles: z.enum(["metal", "cash"]).optional(),
     date: z.coerce.date().optional(),
     paymentType: z.enum(["advance", "final"]).optional(),
     notes: z.string().max(INPUT_LIMITS.notes, `Notes must be ${INPUT_LIMITS.notes} characters or less`).optional(),
     dukandarId: z.string().optional(),
-});
+}).refine(
+    (p) => (p.amount ?? 0) > 0 || (p.goldWeight ?? 0) > 0,
+    { message: "Enter a cash amount, a gold weight, or both" },
+).refine(
+    // Cash aimed at metal has to say what rate it bought at, or there is no way
+    // to turn it into grams. Cash clearing the charges account needs no rate.
+    (p) => !((p.amount ?? 0) > 0 && p.settles !== "cash" && (p.goldRate ?? 0) <= 0),
+    { message: "Gold rate is required for a cash payment against metal" },
+);
 
 export const unifiedCompleteOrderSchema = z.object({
     orderId: z.string().min(24, "Invalid Order ID"),
@@ -61,10 +66,6 @@ export const unifiedCompleteOrderSchema = z.object({
         invoiceDate: z.coerce.date(),
         items: z.array(z.any()), 
         includeGST: z.boolean().default(true),
-        isOrnamentExchanges: z.boolean().default(false),
-        // Tolerant of the legacy { gold, silver } aggregate that shipped
-        // clients still send — see ornamentExchangesSchema.
-        ornamentExchanges: ornamentExchangesSchema,
         subTotal: z.number(),
         gstAmount: z.number(),
         totalAmount: z.number(),

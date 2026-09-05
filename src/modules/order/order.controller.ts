@@ -294,39 +294,7 @@ export const OrderController = {
         }
     ),
 
-    addExchangePhotos: asyncHandler(
-        async (req: Request, res: Response<ApiResponse<unknown>>) => {
-            const files = (req.files as any[]) || [];
-            if (files.length === 0) {
-                throw new AppError("No photos uploaded", { statusCode: 400, code: "BAD_REQUEST" });
-            }
-            const order = await OrderService.addExchangePhotos(
-                req.auth!.sub,
-                req.params.id,
-                Number(req.params.exchangeIndex),
-                files
-            );
-            if (!order) {
-                throw new AppError("Order not found", { statusCode: 404, code: "NOT_FOUND" });
-            }
-            res.status(200).json({ success: true, data: order, message: "Photos added" });
-        }
-    ),
 
-    removeExchangePhoto: asyncHandler(
-        async (req: Request, res: Response<ApiResponse<unknown>>) => {
-            const order = await OrderService.removeExchangePhoto(
-                req.auth!.sub,
-                req.params.id,
-                Number(req.params.exchangeIndex),
-                req.params.fileId
-            );
-            if (!order) {
-                throw new AppError("Order not found", { statusCode: 404, code: "NOT_FOUND" });
-            }
-            res.status(200).json({ success: true, data: order, message: "Photo removed" });
-        }
-    ),
 
     removeItemPhoto: asyncHandler(
         async (req: Request, res: Response<ApiResponse<unknown>>) => {
@@ -343,46 +311,7 @@ export const OrderController = {
         }
     ),
 
-    addOrnamentPhotos: asyncHandler(
-        async (req: Request, res: Response<ApiResponse<unknown>>) => {
-            const files = (req.files as any[]) || [];
-            if (files.length === 0) {
-                throw new AppError("No photos uploaded", {
-                    statusCode: 400,
-                    code: "BAD_REQUEST",
-                });
-            }
-            const order = await OrderService.addOrnamentPhotos(
-                req.auth!.sub,
-                req.params.id,
-                files
-            );
-            if (!order) {
-                throw new AppError("Order not found", {
-                    statusCode: 404,
-                    code: "NOT_FOUND",
-                });
-            }
-            res.status(200).json({ success: true, data: order, message: "Photos added" });
-        }
-    ),
 
-    removeOrnamentPhoto: asyncHandler(
-        async (req: Request, res: Response<ApiResponse<unknown>>) => {
-            const order = await OrderService.removeOrnamentPhoto(
-                req.auth!.sub,
-                req.params.id,
-                req.params.fileId
-            );
-            if (!order) {
-                throw new AppError("Order not found", {
-                    statusCode: 404,
-                    code: "NOT_FOUND",
-                });
-            }
-            res.status(200).json({ success: true, data: order, message: "Photo removed" });
-        }
-    ),
 
     getTrashedOrders: asyncHandler(
         async (req: Request, res: Response<ApiResponse<unknown>>) => {

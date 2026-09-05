@@ -25,11 +25,40 @@ const CustomerSchema = new Schema<Customer>(
       trim: true,
     },
 
+    // The retailer's DISPLAY identity, and the only name anything downstream
+    // reads — what a bill is made out to, what the lists sort and search on,
+    // and what the duplicate check compares.
+    //
+    // Derived at the two write sites rather than typed directly: it is the shop
+    // name when there is one and the owner's name when there is not. The form
+    // requires an owner and leaves the shop optional, so `name` always has a
+    // value while neither typed field is required to. Kept required here for
+    // that reason — a customer with no name at all has nothing to bill.
     name: {
       type: String,
       required: true,
       trim: true,
       maxlength: [INPUT_LIMITS.customerName, `Name cannot exceed ${INPUT_LIMITS.customerName} characters`],
+    },
+
+    // Who you actually deal with. Required by the FORM — a wholesaler always
+    // knows the person, even when the shop has no name worth recording — but
+    // optional here, because records created before this field existed have
+    // none and must keep loading.
+    ownerName: {
+      type: String,
+      required: false,
+      trim: true,
+      maxlength: [INPUT_LIMITS.customerName, `Owner name cannot exceed ${INPUT_LIMITS.customerName} characters`],
+    },
+
+    // The shop, when it has a name. Optional: plenty of small retailers trade
+    // under their own name and there is nothing else to record.
+    shopName: {
+      type: String,
+      required: false,
+      trim: true,
+      maxlength: [INPUT_LIMITS.customerName, `Shop name cannot exceed ${INPUT_LIMITS.customerName} characters`],
     },
 
     // Optional. A walk-in buying a Rs.800 silver toe-ring routinely will not

@@ -51,15 +51,6 @@ router.post("/:id/cancel", OrderController.cancelOrder);
 router.delete("/:id", OrderController.deleteOrder);
 
 // Photos of the old ornaments taken in against this order
-router.post(
-  "/:id/ornament-photos",
-  upload.array("photos", 6),
-  OrderController.addOrnamentPhotos
-);
-router.delete(
-  "/:id/ornament-photos/:fileId",
-  OrderController.removeOrnamentPhoto
-);
 
 // Photos of the items on this order, one set per item, addressed by index —
 // order items have no _id. See OrderItemSchema.
@@ -74,18 +65,6 @@ router.delete(
 );
 
 // Photos of ONE ornament taken in against this record. Separate from
-// /ornament-photos, which is a single set for the exchange as a whole and is
-// how every exchange was recorded before this - those stay and keep working.
-// Addressed by index, like items, because exchange rows carry no _id.
-router.post(
-  "/:id/exchanges/:exchangeIndex/photos",
-  upload.array("photos", 4),
-  OrderController.addExchangePhotos
-);
-router.delete(
-  "/:id/exchanges/:exchangeIndex/photos/:fileId",
-  OrderController.removeExchangePhoto
-);
 
 // Soft-delete (trash) and restore
 router.patch("/:id/trash", OrderController.trashOrder);
