@@ -42,16 +42,15 @@ if not defined BASH_EXE (
 REM --- Environment ------------------------------------------------------------
 echo  Which environment?
 echo.
-echo    1^) dev       ^(port 7101^)  - safe to break
-echo    2^) preprod   ^(port 7102^)
-echo    3^) prod      ^(port 7100^)  - REAL SHOPS
-echo    4^) inspect   - just show what each server is running, change nothing
+echo    1^) dev       ^(port 7111^)  - safe to break
+echo    2^) prod      ^(port 7110^)  - REAL SHOPS
+echo    3^) inspect   - just show what each server is running, change nothing
 echo.
 set "ENVCHOICE="
-set /p "ENVCHOICE=  Enter 1-4 [1]: "
+set /p "ENVCHOICE=  Enter 1-3 [1]: "
 if "!ENVCHOICE!"=="" set "ENVCHOICE=1"
 
-if "!ENVCHOICE!"=="4" (
+if "!ENVCHOICE!"=="3" (
     echo.
     "%BASH_EXE%" scripts/deploy.sh --inspect
     echo.
@@ -60,8 +59,7 @@ if "!ENVCHOICE!"=="4" (
 )
 
 if "!ENVCHOICE!"=="1" set "ENVNAME=dev"
-if "!ENVCHOICE!"=="2" set "ENVNAME=preprod"
-if "!ENVCHOICE!"=="3" set "ENVNAME=prod"
+if "!ENVCHOICE!"=="2" set "ENVNAME=prod"
 
 if not defined ENVNAME (
     echo.
@@ -75,11 +73,11 @@ REM --- Branch -----------------------------------------------------------------
 REM Blank means "use the configured branch", which is what you want almost
 REM always. Naming a branch here applies to this run only and is never saved.
 echo.
-echo  Which branch? Press Enter for the normal one ^(master^).
+echo  Which branch? Press Enter for the normal one ^(main^).
 echo  Type a branch name only to test a feature branch on a lower environment.
 echo.
 set "BRANCHNAME="
-set /p "BRANCHNAME=  Branch [master]: "
+set /p "BRANCHNAME=  Branch [main]: "
 
 REM --- Confirm ----------------------------------------------------------------
 echo.

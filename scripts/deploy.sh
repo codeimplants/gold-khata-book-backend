@@ -5,7 +5,7 @@
 # Usage:
 #   ./scripts/deploy.sh                            # asks which environment, then deploys
 #   ./scripts/deploy.sh --inspect                  # report server state, change nothing
-#   ./scripts/deploy.sh --env preprod              # build + restart preprod
+#   ./scripts/deploy.sh --env dev                  # build + restart dev
 #   ./scripts/deploy.sh --env prod --yes           # prod without the confirm prompt
 #   ./scripts/deploy.sh --env prod --dry-run       # print remote commands, run none
 #   ./scripts/deploy.sh --env prod --restart-only  # restart, no pull/build
@@ -13,7 +13,7 @@
 # Windows: run `scripts\deploy.ps1` instead — same prompts, no bash needed.
 #
 # Flags:
-#   --env <dev|preprod|prod>  Target environment. Omit it and you'll be asked,
+#   --env <dev|prod>          Target environment. Omit it and you'll be asked,
 #                             as long as you're at a terminal. ALWAYS pass it
 #                             explicitly for automated/AI runs — otherwise the
 #                             prompt waits on stdin and hangs.
@@ -28,14 +28,15 @@
 #   --inspect                 Read-only survey of the server.
 #
 # Each environment runs from its own checkout, so a build for one cannot affect
-# another. Deploying to dev or preprod is a genuine rehearsal for prod.
+# another. Deploying to dev is a genuine rehearsal for prod.
 #
-#   gold-khata-book-backend-prod     NODE_ENV=prod     PORT=7100
-#   gold-khata-book-backend-preprod  NODE_ENV=preprod  PORT=7102
-#   gold-khata-book-backend-dev      NODE_ENV=dev      PORT=7101
+#   ~/gold-khata-book/prod   gold-khata-book-backend-prod  NODE_ENV=prod  PORT=7110
+#   ~/gold-khata-book/dev    gold-khata-book-backend-dev   NODE_ENV=dev   PORT=7111
 #
-# (Before the split all three ran from one directory and one dist/, so building
-# for dev also replaced the code prod would run on its next restart.)
+# (The app this was forked from ran every environment from one directory and one
+# dist/, so building for dev also replaced the code prod would run on its next
+# restart. Ports are 7110/7111 because goldrate-backend already owns 7100/7101
+# on this box; 7112 is left free should preprod ever be added.)
 #
 # Each environment also picks its own git branch: <ENV>_BRANCH in
 # deploy.config.sh, falling back to BRANCH. That's what makes dev usable for
@@ -80,6 +81,12 @@ source "$CONFIG"
 [[ -n "${DEPLOY_SSH_HOST:-}" ]] || die "DEPLOY_SSH_HOST not set in $CONFIG"
 [[ -n "${APP_USER:-}" ]] || die "APP_USER not set in $CONFIG"
 
+# Defaulted rather than required, so a deploy.config.sh written before this
+# setting existed still works. It is a default and not a fallback to "whatever
+# node is on PATH" on purpose: the system node is 18 and the app runs on 24, and
+# an unpinned build is precisely the failure this exists to prevent.
+REMOTE_NODE_BIN="${REMOTE_NODE_BIN:-/home/$APP_USER/.local/node24/bin}"
+
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$DEPLOY_SSH_HOST" true 2>/dev/null \
   || die "Cannot SSH to '$DEPLOY_SSH_HOST'. Check ~/.ssh/config and that your key is authorised."
 
@@ -92,7 +99,7 @@ if [[ $INSPECT -eq 1 ]]; then
   info "Inspecting $DEPLOY_SSH_HOST (read-only)..."
   ssh "$DEPLOY_SSH_HOST" "$(as_app_user "
     echo '=== pm2 ==='; pm2 list
-    for d in '$DEV_APP_DIR' '$PREPROD_APP_DIR' '$PROD_APP_DIR'; do
+    for d in '$DEV_APP_DIR' '$PROD_APP_DIR'; do
       echo; echo \"=== \$d ===\"
       if [ ! -d \"\$d\" ]; then echo 'MISSING'; continue; fi
       cd \"\$d\"
@@ -101,7 +108,12 @@ if [[ $INSPECT -eq 1 ]]; then
       echo '.env:    '\$([ -f .env ] && echo present || echo MISSING)
       echo 'dist:    '\$([ -f dist/server.js ] && date -r dist/server.js '+%Y-%m-%d %H:%M' || echo MISSING)
     done
-    echo; echo '=== node ==='; node -v
+    # Both, deliberately: the login shell's node is the ancient system 18, while
+    # the app is pinned to 24 in ecosystem.config.js. Printing only one of them
+    # is how you end up believing the build and the runtime agree.
+    echo; echo '=== node ==='
+    echo 'login shell: '\$(node -v)
+    echo 'app (pinned): '\$('$REMOTE_NODE_BIN'/node -v 2>/dev/null || echo MISSING)
   ")"
   ok "Inspection complete — nothing changed."
   exit 0
@@ -114,36 +126,32 @@ fi
 # be answered.
 if [[ -z "$ENV_NAME" ]]; then
   if [[ ! -t 0 ]]; then
-    die "--env is required (dev|preprod|prod) when not running interactively."
+    die "--env is required (dev|prod) when not running interactively."
   fi
   echo
   info "Which environment do you want to deploy?"
-  echo "  1) dev      ($DEV_PM2_NAME, port $DEV_PORT)"
-  echo "  2) preprod  ($PREPROD_PM2_NAME, port $PREPROD_PORT)"
-  echo "  3) prod     ($PROD_PM2_NAME, port $PROD_PORT)"
+  echo "  1) dev   ($DEV_PM2_NAME, port $DEV_PORT)"
+  echo "  2) prod  ($PROD_PM2_NAME, port $PROD_PORT)"
   echo
-  read -r -p "Enter 1, 2 or 3 [1]: " choice
+  read -r -p "Enter 1 or 2 [1]: " choice
   case "${choice:-1}" in
-    1|dev)     ENV_NAME="dev" ;;
-    2|preprod) ENV_NAME="preprod" ;;
-    3|prod)    ENV_NAME="prod" ;;
-    *)         die "Invalid choice '$choice'" ;;
+    1|dev)  ENV_NAME="dev" ;;
+    2|prod) ENV_NAME="prod" ;;
+    *)      die "Invalid choice '$choice'" ;;
   esac
   info "Selected: $ENV_NAME"
 fi
 
 # Captured before the per-env override below overwrites BRANCH, so the warning
 # further down can tell "this env is on something unusual" from "everything is".
-DEFAULT_BRANCH="${BRANCH:-master}"
+DEFAULT_BRANCH="${BRANCH:-main}"
 
 case "$ENV_NAME" in
-  dev)     APP_DIR="$DEV_APP_DIR";     PM2_NAME="$DEV_PM2_NAME";     PORT="$DEV_PORT"
-           BRANCH="${DEV_BRANCH:-$BRANCH}" ;;
-  preprod) APP_DIR="$PREPROD_APP_DIR"; PM2_NAME="$PREPROD_PM2_NAME"; PORT="$PREPROD_PORT"
-           BRANCH="${PREPROD_BRANCH:-$BRANCH}" ;;
-  prod)    APP_DIR="$PROD_APP_DIR";    PM2_NAME="$PROD_PM2_NAME";    PORT="$PROD_PORT"
-           BRANCH="${PROD_BRANCH:-$BRANCH}" ;;
-  *)       die "Invalid --env '$ENV_NAME'" ;;
+  dev)  APP_DIR="$DEV_APP_DIR";  PM2_NAME="$DEV_PM2_NAME";  PORT="$DEV_PORT"
+        BRANCH="${DEV_BRANCH:-$BRANCH}" ;;
+  prod) APP_DIR="$PROD_APP_DIR"; PM2_NAME="$PROD_PM2_NAME"; PORT="$PROD_PORT"
+        BRANCH="${PROD_BRANCH:-$BRANCH}" ;;
+  *)    die "Invalid --env '$ENV_NAME' (expected dev or prod)" ;;
 esac
 [[ -n "$APP_DIR" ]] || die "APP_DIR for '$ENV_NAME' not set in $CONFIG"
 
@@ -218,8 +226,8 @@ from what you tested. Commit or stash first."
 fi
 
 # --- confirmation -------------------------------------------------------------
-# Only prod needs typed confirmation now: each environment has its own checkout,
-# so deploying dev or preprod cannot affect what prod is running.
+# Only prod needs typed confirmation: each environment has its own checkout, so
+# deploying dev cannot affect what prod is running.
 if [[ "$ENV_NAME" == "prod" && $ASSUME_YES -eq 0 && $DRY_RUN -eq 0 ]]; then
   warn "About to deploy to PRODUCTION ($DEPLOY_SSH_HOST:$APP_DIR, pm2 '$PM2_NAME')."
   warn "Commit: $(git -C "$ROOT" log -1 --oneline "origin/$BRANCH" 2>/dev/null || echo unknown)"
@@ -271,8 +279,16 @@ rm -rf node_modules.prev
 npm run build"
 fi
 
+# PATH first, before anything runs. `bash -lc` on this box resolves `node` to the
+# system Node 18, which has been end-of-life since April 2025 — but the process
+# pm2 starts is pinned to Node 24 by ecosystem.config.js. Without this line the
+# dependencies are installed and the TypeScript is compiled on one major version
+# and then executed on another, and nothing in the output says so: npm prints a
+# warning that its own version does not support Node 18 and carries on.
 REMOTE="set -euo pipefail
+export PATH='$REMOTE_NODE_BIN':\$PATH
 cd '$APP_DIR'
+echo 'node:   '\$(node -v)
 echo 'was at: '\$(git log -1 --oneline)
 test -f .env || { echo 'ERROR: .env missing in $APP_DIR — refusing to restart'; exit 1; }
 $BUILD_STEPS

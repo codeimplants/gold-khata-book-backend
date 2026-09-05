@@ -55,7 +55,7 @@ not. If the script cannot do what is needed, say so rather than bypassing it.
 bash scripts/deploy.sh --inspect                          # read-only survey
 bash scripts/deploy.sh --env dev                          # deploy dev from its configured branch
 bash scripts/deploy.sh --env dev --branch feat/x          # deploy a feature branch, this run only
-bash scripts/deploy.sh --env preprod --dry-run            # show remote script, change nothing
+bash scripts/deploy.sh --env prod --dry-run               # show remote script, change nothing
 bash scripts/deploy.sh --env prod --yes                   # deploy prod, no confirmation prompt
 bash scripts/deploy.sh --env dev --restart-only           # restart only, no pull/build
 ```
@@ -69,20 +69,27 @@ directly** — the wrappers add interactive prompts, which is the opposite of wh
 
 | Env | Port | PM2 name | Server folder |
 |---|---|---|---|
-| dev | 7101 | `gold-khata-book-backend-dev` | `/home/sanskarpandit/gold-khata-book-backend-dev` |
-| preprod | 7102 | `gold-khata-book-backend-preprod` | `/home/sanskarpandit/gold-khata-book-backend-preprod` |
-| prod | 7100 | `gold-khata-book-backend-prod` | `/home/sanskarpandit/gold-khata-book-backend-prod` |
+| dev | 7111 | `gold-khata-book-backend-dev` | `/home/sanskarpandit/gold-khata-book/dev` |
+| prod | 7110 | `gold-khata-book-backend-prod` | `/home/sanskarpandit/gold-khata-book/prod` |
 
-Separate checkouts, separate `.env`, separate databases. Building one cannot affect another, so
+There is **no preprod**. 7112 is deliberately unused so one can be added later without renumbering.
+
+Separate checkouts, separate `.env`, separate databases. Building one cannot affect the other, so
 deploying dev is a genuine rehearsal for prod.
 
-The same VPS also runs unrelated `nexus-backend-*` processes. **Do not touch them.**
+The ports are 7110/7111, **not** the 7100/7101 inherited from the fork — those belong to
+`goldrate-backend-prod` and `goldrate-backend-dev`, which were already listening on this box. Do not
+"restore" them.
+
+The same VPS also runs unrelated `sonebill-backend-*`, `nexus-backend-*`, `sonetaran-api-*`,
+`goldrate-backend-*` and `barnefarms-backend-*` processes. **Do not touch them.** `pm2 restart all`
+would restart six other products' production services.
 
 ---
 
 ## 4. Deploying a feature branch (`--branch`)
 
-Every environment deploys `master` by default. The most common real task — "deploy my branch to dev
+Every environment deploys `main` by default. The most common real task — "deploy my branch to dev
 so I can test a build against it" — needs an override.
 
 ```sh
@@ -136,7 +143,7 @@ Read the `branch:` and `commit:` lines for that environment. They must match wha
 "route exists" from "route missing" without needing a token:
 
 ```sh
-ssh goldkhatabook-vps "curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7101/api/your-new-route"
+ssh hostinger-vps "curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7111/api/your-new-route"
 ```
 
 | Code | Meaning |
@@ -151,7 +158,7 @@ the control you cannot tell a successful deploy from a route that was always the
 
 **6.4 — On failure, read the logs:**
 ```sh
-ssh goldkhatabook-vps "sudo -u sanskarpandit -H pm2 logs gold-khata-book-backend-dev --lines 50"
+ssh hostinger-vps "sudo -u sanskarpandit -H pm2 logs gold-khata-book-backend-dev --lines 50"
 ```
 
 ---
@@ -194,7 +201,7 @@ kill hours later. Separate folders are the only way "deploy to dev first" means 
 ```sh
 if [[ -z "$ENV_NAME" ]]; then
   if [[ ! -t 0 ]]; then
-    die "--env is required (dev|preprod|prod) when not running interactively."
+    die "--env is required (dev|prod) when not running interactively."
   fi
   ...
 fi
@@ -217,7 +224,7 @@ git reset --hard "origin/$BRANCH"
 ```
 `git reset --hard origin/<branch>` alone moves the commit but leaves HEAD on whatever local branch
 was checked out. **This shipped here and was caught within a minute of first use**: after deploying a
-feature branch, `--inspect` reported `branch: master` while running entirely different code. The
+feature branch, `--inspect` reported `branch: main` while running entirely different code. The
 inspection tool is what you trust during an incident; it must not be capable of lying.
 
 **8.6 — Run as the app user, not root.** Root-owned files in the checkout break subsequent deploys,

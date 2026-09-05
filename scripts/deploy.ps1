@@ -11,7 +11,7 @@
   arguments, so there is no second implementation to keep in sync.
 
 .PARAMETER Env
-  dev | preprod | prod. Omit it and deploy.sh asks which one.
+  dev | prod. Omit it and deploy.sh asks which one.
   ALWAYS pass it explicitly from a script or an AI agent — the prompt reads stdin
   and will hang a non-interactive run.
 
@@ -41,7 +41,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('dev', 'preprod', 'prod')]
+    [ValidateSet('dev', 'prod')]
     [string]$Env,
 
     [switch]$Inspect,

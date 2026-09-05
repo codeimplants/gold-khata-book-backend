@@ -1,20 +1,27 @@
 /**
  * PM2 process definitions for the Hostinger VPS (apps.codeimplants.com).
  *
- * Each environment runs from its OWN checkout. This matters: previously all
- * three ran from a single directory and a single dist/, differing only by
- * NODE_ENV and PORT — so `npm run build` for any environment replaced the code
- * all three executed, and prod picked it up on its next restart for any reason.
- * Deploying "to dev" was never a safe rehearsal; there was no code isolation,
- * only database separation.
+ * Each environment runs from its OWN checkout. This matters: in the app this
+ * was forked from, every environment ran from a single directory and a single
+ * dist/, differing only by NODE_ENV and PORT — so `npm run build` for any
+ * environment replaced the code all of them executed, and prod picked it up on
+ * its next restart for any reason. Deploying "to dev" was never a safe
+ * rehearsal; there was no code isolation, only database separation.
  *
- * Each checkout holds its own .env (copied from .env.<env>), which is why the
- * env block below only needs NODE_ENV and PORT.
+ * Each checkout holds its own .env, which is why the env block below only
+ * needs NODE_ENV and PORT.
  *
  * Deploy with scripts/deploy.sh, which targets one environment at a time.
  * Reload after editing this file:  pm2 startOrReload ecosystem.config.js
  */
-const BASE = '/home/sanskarpandit';
+
+/**
+ * Both environments live under one parent directory, unlike the other apps on
+ * this box (sonebill-backend-dev, nexus-backend-prod, … sit flat in $HOME).
+ * Grouping them keeps everything this product owns in one place on a server
+ * that hosts six unrelated apps.
+ */
+const BASE = '/home/sanskarpandit/gold-khata-book';
 
 /**
  * Prefixes every captured stdout/stderr line with a timestamp.
@@ -60,39 +67,45 @@ if (!NODE_24) {
   );
 }
 
+/**
+ * Ports 7110/7111, NOT the 7100/7101 this file used to claim.
+ *
+ * 7100 and 7101 belong to goldrate-backend-prod and goldrate-backend-dev, which
+ * have been listening on this box since before gold-khata-book existed. The
+ * numbers here were inherited from the fork and were never checked against the
+ * server; starting either process would have failed with EADDRINUSE, or — worse
+ * on a restart race — bound the port and taken goldrate down.
+ *
+ * 7112 is deliberately left free for a preprod instance, so adding one later
+ * does not have to renumber anything.
+ *
+ * The pm2 process names keep the full `gold-khata-book-backend-` prefix even
+ * though the directories are just dev/ and prod/: pm2's process list is global
+ * across all six apps on this box, so a process called plain "prod" would be
+ * ambiguous in `pm2 list` and dangerous in `pm2 restart`.
+ */
 module.exports = {
   apps: [
     {
       name: 'gold-khata-book-backend-prod',
       script: 'dist/server.js',
       interpreter: NODE_24,
-      cwd: `${BASE}/gold-khata-book-backend-prod`,
+      cwd: `${BASE}/prod`,
       log_date_format: LOG_DATE_FORMAT,
       env: {
         NODE_ENV: 'prod',
-        PORT: 7100,
-      },
-    },
-    {
-      name: 'gold-khata-book-backend-preprod',
-      script: 'dist/server.js',
-      interpreter: NODE_24,
-      cwd: `${BASE}/gold-khata-book-backend-preprod`,
-      log_date_format: LOG_DATE_FORMAT,
-      env: {
-        NODE_ENV: 'preprod',
-        PORT: 7102,
+        PORT: 7110,
       },
     },
     {
       name: 'gold-khata-book-backend-dev',
       script: 'dist/server.js',
       interpreter: NODE_24,
-      cwd: `${BASE}/gold-khata-book-backend-dev`,
+      cwd: `${BASE}/dev`,
       log_date_format: LOG_DATE_FORMAT,
       env: {
         NODE_ENV: 'dev',
-        PORT: 7101,
+        PORT: 7111,
       },
     },
   ],

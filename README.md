@@ -6,8 +6,8 @@
 >
 > | Area | Change |
 > | --- | --- |
-> | Database | Self-hosted MongoDB everywhere. The Atlas `mongodb+srv://` URIs are gone; dev, preprod and prod all use `mongodb://`. |
-> | Ports | 7100 / 7101 / 7102 (prod / dev / preprod) so this can run beside SoneBill's 7000-7002 on the same box. |
+> | Database | Self-hosted MongoDB, not Atlas. Both environments use `mongodb://`. It must be a **single-node replica set**, not a standalone — `order.service.ts` opens a real multi-document transaction, which a standalone `mongod` rejects outright. |
+> | Ports | 7110 (prod) / 7111 (dev), alongside SoneBill's 7000-7002 and goldrate's 7100-7101 on the same box. 7112 is reserved for a preprod that does not exist yet. |
 > | OTP | Dev no longer bypasses 2Factor. One OTP path in every environment, so a dev login exercises the same code prod does — **dev sends real SMS**. |
 > | SMS account | Shares SoneBill's 2Factor key, by decision. |
 > | JWT | Freshly generated secrets, and issuer/audience `gold-khata-book-api` / `gold-khata-book-client`. SoneBill's tokens are not valid here. |
@@ -42,8 +42,8 @@ The backend relies on the following variables. See [.env.example](.env.example) 
 
 | Category | Key | Description |
 | --- | --- | --- |
-| **Server** | `PORT` | Listening port (default 7100). |
-| **Server** | `NODE_ENV` | `dev`, `preprod`, or `prod`. |
+| **Server** | `PORT` | Listening port (7110 prod, 7111 dev). |
+| **Server** | `NODE_ENV` | `dev` or `prod`. (`preprod` is still accepted by `src/config/db.ts`, but no preprod environment is deployed.) |
 | **Database** | `DEV_DB_URL` | Local MongoDB URI for development. |
 | **Database** | `PROD_DB_URL` | Self-hosted MongoDB URI for production (`mongodb://…`, not Atlas). |
 | **Auth** | `JWT_PRIVATE_KEY` | Secret for HMAC-SHA256 JWT signatures. |
@@ -86,13 +86,13 @@ bash scripts/deploy.sh --inspect      # read-only: what is each server running?
 bash scripts/deploy.sh --env dev      # deploy dev
 ```
 
-Three isolated environments on the VPS, each with its own checkout, `.env` and database:
+Two isolated environments on the VPS, grouped under `/home/sanskarpandit/gold-khata-book/`, each with
+its own checkout, `.env` and database:
 
-| Env | Port | Notes |
-|---|---|---|
-| dev | 7101 | Safe to break |
-| preprod | 7102 | Final rehearsal |
-| prod | 7100 | **Real shops** |
+| Env | Folder | Port | Notes |
+|---|---|---|---|
+| dev | `gold-khata-book/dev` | 7111 | Safe to break |
+| prod | `gold-khata-book/prod` | 7110 | **Real shops** |
 
 Deploys are gated on a health check against a real endpoint, so nothing reports success until the
 port actually answers.

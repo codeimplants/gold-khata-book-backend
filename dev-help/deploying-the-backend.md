@@ -15,15 +15,14 @@ Double-click **`scripts\deploy.cmd`**.
 ```
   Which environment?
 
-    1) dev       (port 7101)  - safe to break
-    2) preprod   (port 7102)
-    3) prod      (port 7100)  - REAL SHOPS
-    4) inspect   - just show what each server is running, change nothing
+    1) dev       (port 7111)  - safe to break
+    2) prod      (port 7110)  - REAL SHOPS
+    3) inspect   - just show what each server is running, change nothing
 
-  Enter 1-4 [1]: 1
+  Enter 1-3 [1]: 1
 
-  Which branch? Press Enter for the normal one (master).
-  Branch [master]:
+  Which branch? Press Enter for the normal one (main).
+  Branch [main]:
 
   Continue? [y/N]: y
 ```
@@ -36,25 +35,30 @@ It finishes with either:
 
 or a clearly marked failure. The window stays open either way so you can read it.
 
-**If you are not sure what state the servers are in, pick option 4 first.** It only reads; it cannot
+**If you are not sure what state the servers are in, pick option 3 first.** It only reads; it cannot
 change anything.
 
 ---
 
-## What the three environments are
+## What the two environments are
 
-Each one is a **separate folder on the server with its own `.env` and its own database**. They do not
-share code. Building one cannot affect another.
+Both live under **one folder on the server**, `/home/sanskarpandit/gold-khata-book/`, and each is a
+separate checkout with its own `.env` and its own database. They do not share code. Building one
+cannot affect the other.
 
-| | Port | Who uses it | If you break it |
-|---|---|---|---|
-| **dev** | 7101 | You, and test APKs built with `-AppEnv dev` | Nothing happens. Fix it and deploy again. |
-| **preprod** | 7102 | Final rehearsal before a release | Nobody outside the team notices |
-| **prod** | 7100 | **Real jewellery shops, running their real billing** | Real shops cannot bill customers |
+| | Folder | Port | Who uses it | If you break it |
+|---|---|---|---|---|
+| **dev** | `gold-khata-book/dev` | 7111 | You, and test APKs built with `-AppEnv dev` | Nothing happens. Fix it and deploy again. |
+| **prod** | `gold-khata-book/prod` | 7110 | **Real jewellery shops, running their real billing** | Real shops cannot bill customers |
 
-> This separation is newer than the project. Previously all three ran from one folder and one `dist/`,
-> so building "for dev" replaced the code prod would run on its next restart. Deploying to dev was
-> never a safe rehearsal. It is now.
+> There is no preprod. Port 7112 is left unused so one can be added without renumbering anything.
+>
+> The ports are 7110/7111, not the 7100/7101 this document claimed when it was forked — those belong
+> to `goldrate-backend`, which was already running on this box.
+>
+> Separate checkouts matter: the app this was forked from ran every environment from one folder and
+> one `dist/`, so building "for dev" replaced the code prod would run on its next restart. Deploying
+> to dev was never a safe rehearsal there. It is here.
 
 ---
 
@@ -84,16 +88,16 @@ anything.
 
 ---
 
-## Deploying a branch that isn't `master`
+## Deploying a branch that isn't `main`
 
-By default every environment deploys `master`. That is what you want almost always.
+By default every environment deploys `main`. That is what you want almost always.
 
 Sometimes you need to test a feature branch on a real server before merging — most often because you
 want to run a test APK on your phone against real infrastructure. Then, at the branch prompt, type
 the branch name instead of pressing Enter:
 
 ```
-  Branch [master]: feat/old-gold-declaration
+  Branch [main]: feat/old-gold-declaration
 ```
 
 Or from the shell:
@@ -102,27 +106,27 @@ Or from the shell:
 bash scripts/deploy.sh --env dev --branch feat/old-gold-declaration
 ```
 
-**This applies to that one run and is never saved anywhere.** The next deploy goes back to `master`
+**This applies to that one run and is never saved anywhere.** The next deploy goes back to `main`
 on its own — there is nothing to remember to undo. That is deliberate: a setting you must remember to
 revert is a setting that eventually ships a feature branch to production.
 
 The script announces a non-default branch every single time:
 
 ```
-Branch for 'dev' is 'feat/old-gold-declaration' (not the default 'master').
-Target: dev → /home/sanskarpandit/gold-khata-book-backend-dev @ origin/feat/old-gold-declaration
+Branch for 'dev' is 'feat/old-gold-declaration' (not the default 'main').
+Target: dev → /home/sanskarpandit/gold-khata-book/dev @ origin/feat/old-gold-declaration
 ```
 
-**Do not do this on prod.** Prod should only ever run `master`. If you type a branch name for prod,
+**Do not do this on prod.** Prod should only ever run `main`. If you type a branch name for prod,
 the script warns you loudly, but it will not stop you.
 
 ### If you want it to stick
 
-For a longer-lived arrangement (say preprod tracks a release branch for a week), set it in
+For a longer-lived arrangement (say dev tracks a release branch for a week), set it in
 `scripts/deploy.config.sh`:
 
 ```sh
-PREPROD_BRANCH="release/2.0"
+DEV_BRANCH="release/2.0"
 ```
 
 That file is **gitignored** — it is yours alone and cannot be committed or affect anyone else.
@@ -160,7 +164,7 @@ nowhere but your laptop.
 **Guard 1 — uncommitted changes.**
 
 ```
-ERROR: Uncommitted local changes on 'master'. The server deploys origin/master,
+ERROR: Uncommitted local changes on 'main'. The server deploys origin/main,
 so your uncommitted work would NOT ship — deployed code would silently differ
 from what you tested. Commit or stash first.
 ```
@@ -171,7 +175,7 @@ branch, those changes were never going to ship, so it just tells you and continu
 **Guard 2 — unpushed commits.**
 
 ```
-Local HEAD differs from origin/master — the server deploys origin/master.
+Local HEAD differs from origin/main — the server deploys origin/main.
 Push first if you meant to ship your local commits.
 Continue anyway? [y/N]
 ```
@@ -185,15 +189,19 @@ A prompt, not a stop — sometimes you legitimately deploy someone else's pushed
 
 ## When it goes wrong
 
-**`Cannot SSH to 'goldkhatabook-vps'`**
+**`Cannot SSH to 'hostinger-vps'`**
 Your SSH key isn't set up. Add to `~/.ssh/config`:
 ```
-Host goldkhatabook-vps
+Host hostinger-vps
   HostName 31.97.61.191
-  User root
-  IdentityFile ~/.ssh/id_goldkhatabook_vps
+  User sanskarpandit
+  IdentityFile ~/.ssh/vps_sanskarpandit_claude
 ```
 Then ask someone to authorise your key on the server.
+
+Log in as `sanskarpandit`, **not** root. The script wraps every remote command in
+`sudo -u sanskarpandit`, which needs no password when you are already that user. As root it would
+leave root-owned files in the checkout and break git with "dubious ownership".
 
 **`Missing scripts/deploy.config.sh`**
 ```sh
@@ -207,7 +215,7 @@ Install Git for Windows: https://git-scm.com/download/win
 **`Health check FAILED (HTTP 000)` or `502`**
 The process restarted but is not serving. The script prints the command to read the logs — run it:
 ```sh
-ssh goldkhatabook-vps "sudo -u sanskarpandit -H pm2 logs gold-khata-book-backend-dev --lines 50"
+ssh hostinger-vps "sudo -u sanskarpandit -H pm2 logs gold-khata-book-backend-dev --lines 50"
 ```
 Usually a missing env var or a database it cannot reach.
 
@@ -226,7 +234,7 @@ you probably deployed a different branch than you meant to.
 There is no rollback command. Deploy is just "check out this commit and rebuild", so **rolling back
 is deploying the previous commit** — revert on the branch, push, deploy again.
 
-For a fast mitigation when a bad deploy is actively breaking prod, revert the commit on `master`,
+For a fast mitigation when a bad deploy is actively breaking prod, revert the commit on `main`,
 push, and deploy. This is fast because `npm ci` and `tsc` are the only slow steps.
 
 ---

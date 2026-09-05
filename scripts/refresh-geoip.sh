@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Downloads the current month's city database into every goldkhatabook checkout.
+# Downloads the current month's city database into both goldkhatabook checkouts
+# (~/gold-khata-book/dev and ~/gold-khata-book/prod).
 #
 # db-ip publishes a fresh City Lite file monthly and stops serving old months,
 # so this is a refresh job, not a one-time install. Both that licence and
@@ -10,12 +11,14 @@
 #   cp scripts/refresh-geoip.sh ~/bin/goldkhatabook-geoip-refresh.sh
 #   chmod 700 ~/bin/goldkhatabook-geoip-refresh.sh
 #   crontab -e
-#     30 3 3 * * /home/sanskarpandit/bin/goldkhatabook-geoip-refresh.sh >> /home/sanskarpandit/backups/goldkhatabook-geoip.log 2>&1
+#     30 3 4 * * /home/sanskarpandit/bin/goldkhatabook-geoip-refresh.sh >> /home/sanskarpandit/backups/goldkhatabook-geoip.log 2>&1
 #
-# Runs on the 3rd of the month: the new file is not always up on the 1st, and a
-# failed fetch leaves the previous month's copy in place rather than none. The
-# 3rd rather than the 2nd only to keep it off the same night as goldrate's own
-# refresh, which fetches the identical file for a different app.
+# Runs on the 4th of the month: the new file is not always up on the 1st, and a
+# failed fetch leaves the previous month's copy in place rather than none.
+#
+# The 4th specifically because goldrate already refreshes on the 2nd and
+# sonebill on the 3rd, and all three fetch the same ~122 MB file from db-ip for
+# different apps. Stacking them on one night is a self-inflicted rate limit.
 #
 # Runs as the app user; needs no sudo.
 
@@ -44,8 +47,12 @@ if [ "$SIZE" -lt 10000000 ]; then
 fi
 
 INSTALLED=0
-for env in prod preprod dev; do
-  DEST="$HOME/gold-khata-book-backend-$env/data"
+for env in prod dev; do
+  # Both checkouts live under one parent, ~/gold-khata-book/{dev,prod}. The
+  # flat ~/gold-khata-book-backend-<env> paths this loop used were inherited
+  # from the fork and never existed on this server — the job would have run
+  # cleanly, created two directories nothing reads, and reported success.
+  DEST="$HOME/gold-khata-book/$env/data"
   # Created rather than skipped: unlike goldrate, these checkouts have no data
   # directory of their own, so requiring one to pre-exist would mean this job
   # silently does nothing on a freshly provisioned environment.
@@ -66,5 +73,5 @@ fi
 
 # The database is read once at boot, so a fresh file only takes effect on
 # restart. Cheap for this service and keeps the job self-contained.
-pm2 restart gold-khata-book-backend-prod gold-khata-book-backend-preprod gold-khata-book-backend-dev --update-env >/dev/null 2>&1 || true
-echo "[$(date -Is)] restarted all three services"
+pm2 restart gold-khata-book-backend-prod gold-khata-book-backend-dev --update-env >/dev/null 2>&1 || true
+echo "[$(date -Is)] restarted both services"

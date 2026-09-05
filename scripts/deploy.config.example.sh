@@ -4,32 +4,50 @@
 #   cp scripts/deploy.config.example.sh scripts/deploy.config.sh
 #
 # deploy.config.sh is gitignored. It holds server addresses only — never secrets.
-# Application secrets live in .env.dev / .env.preprod / .env.prod ON THE SERVER
-# and are never read, written or transported by this script.
+# Application secrets live in the .env inside each checkout ON THE SERVER and are
+# never read, written or transported by this script.
 
 # --- SSH ---------------------------------------------------------------------
-# Add this to ~/.ssh/config, then put the alias here:
+# 31.97.61.191 is the shared application server (hostname "apps"). It also runs
+# sonebill, nexus, sonetaran, goldrate and barnefarms, so the host alias is a
+# nickname for a machine this app shares — not a machine it owns.
 #
-#   Host goldkhatabook-vps
+# ~/.ssh/config already defines this alias for the other apps:
+#
+#   Host hostinger-vps
 #     HostName 31.97.61.191
-#     User root
-#     IdentityFile ~/.ssh/id_goldkhatabook_vps
+#     User sanskarpandit
+#     IdentityFile ~/.ssh/vps_sanskarpandit_claude
 #
-DEPLOY_SSH_HOST="goldkhatabook-vps"
+# Log in as the app user, NOT root. deploy.sh wraps every remote command in
+# `sudo -u $APP_USER`, and sudo skips authentication when the target user is the
+# invoking user — so connecting as sanskarpandit needs no sudo password, while
+# connecting as root would leave root-owned files in the checkout and break git
+# with "dubious ownership".
+DEPLOY_SSH_HOST="hostinger-vps"
 
 # --- Server layout -----------------------------------------------------------
-# Each environment has its OWN checkout, so building one cannot affect another.
-# (Until the split they shared a single checkout and dist/, which meant a build
-# for dev also replaced the code prod would run on its next restart.)
+# Both environments live under ONE parent directory:
 #
-# Checkouts are owned by APP_USER, not root, so git/npm/pm2 must run as them.
+#   /home/sanskarpandit/gold-khata-book/
+#     dev/     <- its own checkout, .env and dist/
+#     prod/    <- its own checkout, .env and dist/
+#
+# Separate checkouts are the point: building one cannot affect the other. The
+# app this was forked from ran every environment from a single checkout and a
+# single dist/, so a build "for dev" also replaced the code prod would run on
+# its next restart.
+#
+# Checkouts are owned by APP_USER, so git/npm/pm2 must run as them.
 APP_USER="sanskarpandit"
 
 # Branch every environment deploys unless told otherwise.
-BRANCH="master"
+# This repo's default branch is `main` (the app it was forked from used
+# `master` — do not copy that value across).
+BRANCH="main"
 
 # Optional per-environment branch. Leave these commented out unless you have a
-# standing reason — a release branch that preprod should track for a while, say.
+# standing reason — a release branch that dev should track for a while, say.
 #
 # To test a feature branch on dev you almost certainly want `--branch` instead:
 #
@@ -41,23 +59,30 @@ BRANCH="master"
 #
 # NEVER point PROD_BRANCH at anything but the release branch.
 #
-# DEV_BRANCH="master"
-# PREPROD_BRANCH="master"
-# PROD_BRANCH="master"
+# DEV_BRANCH="main"
+# PROD_BRANCH="main"
 
 # Per-environment checkout, PM2 process name (from `pm2 list` as APP_USER),
 # and the port that instance listens on.
-DEV_APP_DIR="/home/sanskarpandit/gold-khata-book-backend-dev"
+#
+# Ports are 7110/7111, NOT the 7100/7101 this file claimed when it was forked.
+# 7100 and 7101 belong to goldrate-backend-prod and goldrate-backend-dev, which
+# were already listening on this box. 7112 is left free for a preprod instance.
+DEV_APP_DIR="/home/sanskarpandit/gold-khata-book/dev"
 DEV_PM2_NAME="gold-khata-book-backend-dev"
-DEV_PORT="7101"
+DEV_PORT="7111"
 
-PREPROD_APP_DIR="/home/sanskarpandit/gold-khata-book-backend-preprod"
-PREPROD_PM2_NAME="gold-khata-book-backend-preprod"
-PREPROD_PORT="7102"
-
-PROD_APP_DIR="/home/sanskarpandit/gold-khata-book-backend-prod"
+PROD_APP_DIR="/home/sanskarpandit/gold-khata-book/prod"
 PROD_PM2_NAME="gold-khata-book-backend-prod"
-PROD_PORT="7100"
+PROD_PORT="7110"
+
+# --- Node --------------------------------------------------------------------
+# The server's default `node` is 18 (end-of-life since April 2025); the app runs
+# on 24, pinned explicitly in ecosystem.config.js. Without this, the remote
+# `npm ci` and `npm run build` would run under 18 while the process that serves
+# traffic runs under 24 — the build and the runtime on two different majors,
+# with nothing anywhere saying so.
+REMOTE_NODE_BIN="/home/sanskarpandit/.local/node24/bin"
 
 # --- Health check ------------------------------------------------------------
 # Path hit on 127.0.0.1:<port> after restart. Empty to skip.
