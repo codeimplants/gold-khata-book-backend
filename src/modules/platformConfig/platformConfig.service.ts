@@ -10,9 +10,27 @@ const DEFAULTS: IPlatformConfig = {
   supportEmail: "codeimplants@gmail.com",
   supportAddress:
     "Code Implants Software Technologies Pvt. Ltd., Maa Ganga Colony, Kalewadi, Pimpri-Chinchwad, Maharashtra 411017",
+  // Gold Khata Book's own Nexus application key, minted when this app was
+  // registered in Nexus (Applications -> New Application generates it as a
+  // UUID). It identifies which app is calling; it is not a secret, and the same
+  // value ships to every client through /api/platform/config.
+  //
+  // It was SoneBill's key until now — inherited wholesale with the fork. That
+  // defeated the precaution taken on the client side, where VITE_VC_API_KEY was
+  // deliberately left empty with a comment explaining that reusing SoneBill's
+  // key would file this app's device registrations and telemetry under SoneBill
+  // in Nexus. The server value wins over the compiled one (see the client's
+  // utils/versionControlConfig.ts), so the empty client default prevented
+  // nothing: every device registered as SoneBill regardless.
+  //
+  // Changing this constant is NOT sufficient on its own. getConfig() below
+  // backfills versionControl only when it is absent, so any environment whose
+  // platformconfigs document already exists keeps whatever was written there
+  // first. Both dev and prod had such a document — created by the very first
+  // health check after deployment — and were updated by hand alongside this.
   versionControl: {
     backendUrl: "https://api.nexus.codeimplants.com",
-    apiKey: "fdeac8d2-d724-4a85-b6c8-ed040163010b",
+    apiKey: "c77e9193-9b8f-4e14-9780-7a0355a13abb",
   },
 };
 
