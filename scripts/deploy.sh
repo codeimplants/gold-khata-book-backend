@@ -292,7 +292,23 @@ echo 'node:   '\$(node -v)
 echo 'was at: '\$(git log -1 --oneline)
 test -f .env || { echo 'ERROR: .env missing in $APP_DIR — refusing to restart'; exit 1; }
 $BUILD_STEPS
-pm2 restart '$PM2_NAME' --update-env
+# startOrRestart, not restart, and against the ecosystem file rather than the
+# process name. Two reasons.
+#
+# A plain 'pm2 restart <name>' fails outright the first time an environment is
+# deployed, because there is no process by that name yet — so standing up a new
+# environment needed a manual 'pm2 start' that lived only in someone's shell
+# history. This is that bootstrap, in the deploy path where it belongs.
+#
+# It also re-reads ecosystem.config.js on every deploy, so a change to a port,
+# cwd or interpreter takes effect when it is deployed. 'restart <name>' reuses
+# the definition pm2 already had in memory, which means the committed config and
+# the running process can disagree indefinitely and nothing says so.
+pm2 startOrRestart ecosystem.config.js --only '$PM2_NAME' --update-env
+# Without this the process list is lost on reboot: pm2-startup resurrects only
+# what was saved. A new environment that survives until the next restart and
+# then silently vanishes is worse than one that never started.
+pm2 save --force >/dev/null 2>&1 || true
 pm2 describe '$PM2_NAME' | grep -E 'status|restarts' || true"
 
 if [[ $DRY_RUN -eq 1 ]]; then
