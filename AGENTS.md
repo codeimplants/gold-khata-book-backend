@@ -3,6 +3,11 @@
 Read this before changing anything. It is the short version of what this
 service is for and which parts will bite you.
 
+> **Work in progress:** the app is being reworked to pass App Store guideline
+> 4.3(a). The plan and progress log are in the frontend repo:
+> `../gold-khata-book-frontend/APP_STORE_4.3_REWORK.md`. It includes the
+> production demo account App Review signs in with.
+
 ## What this is
 
 The API behind **Gold Khata Book**, a khata (ledger) app for **gold
@@ -75,6 +80,26 @@ It defaults to `"metal"`, which is what an advance payment has always meant here
 Completing on settled metal alone would close orders that still owe charges,
 and completion zeroes both balances — so the debt would not be hidden, it would
 be erased.
+
+## Held money: `src/modules/retailerAccount/`
+
+What a retailer has left with the wholesaler that is **not against any sale**,
+per retailer, as entries plus two balances recomputed from them on every save:
+
+| field | what | in by | out by |
+| --- | --- | --- | --- |
+| `heldCash` | rupees, rate NOT fixed | `POST /:id/cash` (cash with the rate to be fixed later, or a cash advance); an order's overpayment (`creditOverpayment`, linked by `orderId`) | `POST /:id/cash/allocate` at the rate the retailer names on the day, never an old rate; `/cash/refund` |
+| `meltCredit` | grams of 99.50, ALL gold held | a melt lot (`/melt`); a gold advance (`POST /:id/gold` {weight, purity}, entry `gold-received`, credited with `priceInboundMetal`) | `POST /:id/melt/apply` gram for gram; `/melt/payout` |
+
+`meltCredit` kept its name when gold advances joined it, because it is the wire
+format the apps read. `GET /retailer-account` lists every account with entries
+(the app's home totals and day book).
+
+Held money is shown BESIDE dues and never netted off them: netting hides that
+the wholesaler is holding the retailer's money. Payments that `allocate` and
+`apply` post on an order carry `paymentType: "credit"` (allowed on invoices
+too), so a day book can tell money that moved from the account from money
+handed over that day.
 
 ## What was removed, and why it is not coming back
 

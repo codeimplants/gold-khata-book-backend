@@ -25,6 +25,7 @@ const AccountEntrySchema = new Schema(
                 "melt-credited",
                 "melt-applied",
                 "melt-paid-out",
+                "gold-received",
             ],
         },
         // Signed: positive adds to what the wholesaler holds, negative draws
@@ -36,6 +37,12 @@ const AccountEntrySchema = new Schema(
         rate: { type: Number, required: false, min: 0 },
         orderId: { type: Schema.Types.ObjectId, required: false, ref: "Order" },
         notes: { type: String, required: false, trim: true },
+
+        // `gold-received` only: the metal as it was handed over, before it was
+        // restated at 99.50. `metalDelta` is the credit; these are what the
+        // retailer will quote back when they dispute it.
+        goldWeight: { type: Number, required: false, min: 0 },
+        goldPurity: { type: Number, required: false, min: 0, max: 100 },
 
         // The weighings behind a melt lot — see MeltLot in the types file for
         // what each stage is and why they are all kept. `_id: false` because
@@ -79,6 +86,9 @@ const RetailerAccountSchema = new Schema<RetailerAccount>(
         },
 
         heldCash: { type: Number, required: true, default: 0, min: 0 },
+        // All the 99.50 metal held for the retailer: melt lots AND gold left as
+        // an advance. Still named for melt because it is the wire format the
+        // apps read; the entries say where each gram came from.
         meltCredit: { type: Number, required: true, default: 0, min: 0 },
 
         entries: { type: [AccountEntrySchema], required: true, default: [] },

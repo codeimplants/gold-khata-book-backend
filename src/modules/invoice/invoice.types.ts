@@ -32,7 +32,7 @@ export interface InvoiceAdvancePayment {
   amount: number;
   goldRate: number;
   weightCovered: number;
-  paymentType?: "advance" | "final";
+  paymentType?: "advance" | "final" | "credit";
   notes?: string;
 }
 

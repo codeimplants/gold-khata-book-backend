@@ -6,7 +6,7 @@ export interface AdvancePayment {
     amount: number;
     goldRate: number; // Rate per gram at the time of payment
     weightCovered: number; // Weight covered by this payment in grams
-    paymentType?: "advance" | "final";
+    paymentType?: "advance" | "final" | "credit";
     notes?: string;
 
     /**
@@ -167,7 +167,7 @@ export interface AddPaymentDTO {
     /** Which account the cash settles — see AdvancePayment. */
     settles?: "metal" | "cash";
     date?: Date;
-    paymentType?: "advance" | "final";
+    paymentType?: "advance" | "final" | "credit";
     notes?: string;
 }
 

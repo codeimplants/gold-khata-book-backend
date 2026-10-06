@@ -4,6 +4,7 @@ import type { ApiResponse } from "../../common/types/api";
 import { RetailerAccountService } from "./retailerAccount.service";
 import {
     receiveCashSchema,
+    receiveGoldSchema,
     allocateCashSchema,
     applyMeltCreditSchema,
     creditMeltSchema,
@@ -11,6 +12,35 @@ import {
 } from "./retailerAccount.schema";
 
 export const RetailerAccountController = {
+    /** Every retailer account this shop has used, for totals and the day book. */
+    listAccounts: asyncHandler(
+        async (req: Request, res: Response<ApiResponse<unknown>>) => {
+            const accounts = await RetailerAccountService.listAccounts(
+                req.auth!.sub,
+                req.query.dukandarId as string | undefined,
+            );
+            res.status(200).json({ success: true, data: accounts });
+        },
+    ),
+
+    /** Gold left as an advance, held until it is applied to a sale. */
+    receiveGold: asyncHandler(
+        async (req: Request, res: Response<ApiResponse<unknown>>) => {
+            const { dukandarId, ...payload } = receiveGoldSchema.parse(req.body);
+            const account = await RetailerAccountService.receiveGold(
+                req.auth!.sub,
+                req.params.customerId,
+                payload,
+                dukandarId,
+            );
+            res.status(201).json({
+                success: true,
+                data: account,
+                message: "Gold received and held",
+            });
+        },
+    ),
+
     /** The retailer's held cash, melt credit and the movements behind them. */
     getAccount: asyncHandler(
         async (req: Request, res: Response<ApiResponse<unknown>>) => {

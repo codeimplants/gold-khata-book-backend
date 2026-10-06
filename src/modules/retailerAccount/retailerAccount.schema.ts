@@ -13,6 +13,18 @@ export const receiveCashSchema = z.object({
     dukandarId: z.string().optional(),
 });
 
+/**
+ * Gold left with the wholesaler and held: an advance against purchases to come.
+ * The weight and purity as handed over; the server restates it at 99.50.
+ */
+export const receiveGoldSchema = z.object({
+    weight: z.number().positive("Enter a weight"),
+    purity: z.number().positive("Enter the purity").max(100, "Purity cannot exceed 100%"),
+    date: z.coerce.date().optional(),
+    notes,
+    dukandarId: z.string().optional(),
+});
+
 export const allocateCashSchema = z.object({
     orderId: z.string().min(24, "Invalid Order ID"),
     amount: z.number().positive("Enter an amount"),

@@ -6,13 +6,14 @@ import {
 } from "./retailerAccount.model";
 import type {
     ReceiveCashDTO,
+    ReceiveGoldDTO,
     AllocateCashDTO,
     ApplyMeltCreditDTO,
     MeltLot,
 } from "./retailerAccount.types";
 import { OrderService } from "../order/order.service";
 import { AppError } from "../../common/errors/AppError";
-import { SETTLEMENT_FINENESS } from "../../common/utils/goldPricing";
+import { SETTLEMENT_FINENESS, priceInboundMetal } from "../../common/utils/goldPricing";
 
 const oid = (v: string) => new Types.ObjectId(v);
 
@@ -41,6 +42,22 @@ export const RetailerAccountService = {
     },
 
     /**
+     * Every account this shop holds anything on, or ever has.
+     *
+     * For the khata home ("held for retailers") and the day book, which list
+     * cash held and gold advances alongside sales. Only accounts with entries:
+     * the per-retailer route upserts an empty account on first view, and those
+     * hold nothing worth sending.
+     */
+    async listAccounts(userId: string, dukandarId?: string) {
+        return RetailerAccountModel.find({
+            userId: oid(userId),
+            ...(dukandarId ? { dukandarId: oid(dukandarId) } : {}),
+            "entries.0": { $exists: true },
+        });
+    },
+
+    /**
      * Cash in, deliberately unapplied.
      *
      * The retailer's own choice: he hands over money but keeps his metal
@@ -66,6 +83,47 @@ export const RetailerAccountService = {
             type: "cash-received",
             cashDelta: payload.amount,
             metalDelta: 0,
+            // Only an overpayment carries one, set by OrderService — the route
+            // schema does not accept it. See ReceiveCashDTO.orderId.
+            ...(payload.orderId ? { orderId: oid(payload.orderId) } : {}),
+            notes: payload.notes,
+        });
+        await account.save();
+        return account;
+    },
+
+    /**
+     * Gold in, held rather than set against a bill.
+     *
+     * A retailer leaving metal ahead of the purchases it is meant for, or
+     * handing over gold while a sale is still being weighed up. Credited in
+     * 99.50 terms by `priceInboundMetal`, the same inbound rule a metal payment
+     * on an order goes through, so a gram left here is worth exactly what it
+     * would have been worth paid against a sale. Applying it later is the melt
+     * credit path (`applyMeltCredit`): gram for gram, no rate.
+     */
+    async receiveGold(
+        userId: string,
+        customerId: string,
+        payload: ReceiveGoldDTO,
+        dukandarId?: string,
+    ) {
+        const credit = priceInboundMetal(payload.weight, payload.purity);
+        if (!(credit > 0)) {
+            throw new AppError("Enter the weight and purity of the gold", {
+                statusCode: 400,
+                code: "BAD_REQUEST",
+            });
+        }
+
+        const account = await this.getAccount(userId, customerId, dukandarId);
+        account.entries.push({
+            date: payload.date || new Date(),
+            type: "gold-received",
+            cashDelta: 0,
+            metalDelta: credit,
+            goldWeight: payload.weight,
+            goldPurity: payload.purity,
             notes: payload.notes,
         });
         await account.save();
@@ -121,6 +179,9 @@ export const RetailerAccountService = {
                 goldRate: payload.goldRate,
                 settles: "metal",
                 date: payload.date,
+                // Marks the payment as money already held, not money handed
+                // over today: the day book counted it when it came in.
+                paymentType: "credit",
                 notes: payload.notes || "Allocated from held cash",
             },
             dukandarId,
@@ -247,7 +308,9 @@ export const RetailerAccountService = {
                 goldPurity: SETTLEMENT_FINENESS,
                 settles: "metal",
                 date: payload.date,
-                notes: payload.notes || "Applied from melt credit",
+                // Metal already held, counted when it came in. See allocateCash.
+                paymentType: "credit",
+                notes: payload.notes || "Applied from gold held",
             },
             dukandarId,
         );

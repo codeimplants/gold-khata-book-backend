@@ -81,7 +81,7 @@ const AdvancePaymentSchema = new Schema<AdvancePayment>(
         },
         paymentType: {
             type: String,
-            enum: ["advance", "final"],
+            enum: ["advance", "final", "credit"],
             default: "advance",
         },
         notes: {

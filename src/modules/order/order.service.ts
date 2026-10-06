@@ -228,8 +228,20 @@ export const OrderService = {
                 String(order.customerId?._id || order.customerId),
                 {
                     amount,
-                    date: new Date(),
+                    // Dated with the payment that overpaid, not the moment this
+                    // ran: a back-dated receipt's surplus belongs on the same
+                    // day in the day book, not today.
+                    date: (() => {
+                        const last = (order.payments || [])
+                            .map((p: any) => new Date(p.date).getTime())
+                            .filter((t: number) => Number.isFinite(t))
+                            .sort((a: number, b: number) => b - a)[0];
+                        return last ? new Date(last) : new Date();
+                    })(),
                     notes: `Overpaid on ${order.orderNumber || "order"}`,
+                    // So the day book reads this as a surplus moved across,
+                    // not as cash handed over a second time.
+                    orderId: String(order._id),
                 },
                 dukandarId,
             );

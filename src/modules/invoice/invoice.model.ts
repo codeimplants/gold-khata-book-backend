@@ -116,7 +116,7 @@ const InvoiceAdvancePaymentSchema = new Schema<InvoiceAdvancePayment>(
     weightCovered: { type: Number, required: true, min: 0 },
     paymentType: {
       type: String,
-      enum: ["advance", "final"],
+      enum: ["advance", "final", "credit"],
       default: "advance",
     },
     notes: { type: String, trim: true },

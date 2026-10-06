@@ -35,10 +35,12 @@ export interface RetailerAccount {
     heldCash: number;
 
     /**
-     * Grams of 99.50 fine credited from completed melt lots and not yet used.
+     * Grams of 99.50 fine held for the retailer and not yet used: credited
+     * from completed melt lots, or left as a gold advance (`gold-received`).
      *
      * Metal the wholesaler is holding on the retailer's behalf. Drawn down
-     * against bills, or paid out as cash or gold.
+     * against bills, or paid out as cash or gold. The name predates gold
+     * advances and stays, because it is the wire format the apps read.
      */
     meltCredit: number;
 
@@ -60,7 +62,14 @@ export type AccountEntryType =
     /** Melt credit drawn down onto an order. */
     | "melt-applied"
     /** Melt credit paid out as cash or handed back as fine gold. */
-    | "melt-paid-out";
+    | "melt-paid-out"
+    /**
+     * Gold handed over and held rather than set against a bill: an advance
+     * for purchases to come, or metal left before the sale it is meant for.
+     * Credited at 99.50 by the inbound rule, exactly as a metal payment on an
+     * order would be, and drawn down the same way melt credit is.
+     */
+    | "gold-received";
 
 /**
  * The weighings behind one melt lot, kept because every one of them is a figure
@@ -119,11 +128,30 @@ export interface AccountEntry {
      *  at, stage by stage. Absent on lots recorded before this existed. */
     melt?: MeltLot;
 
+    /** `gold-received` only: the metal as handed over, before conversion. */
+    goldWeight?: number;
+    goldPurity?: number;
+
     notes?: string;
 }
 
 export interface ReceiveCashDTO {
     amount: number;
+    date?: Date;
+    notes?: string;
+    /**
+     * Internal, never taken from a request: set when the cash is an order's
+     * overpayment, so a day book can tell it from money handed over that day.
+     * The overpayment was already counted once, as the payment on the order.
+     */
+    orderId?: string;
+}
+
+export interface ReceiveGoldDTO {
+    /** Grams as handed over. */
+    weight: number;
+    /** Its purity as tested or stamped, e.g. 99.9 for a bar, 91.6 for 22K. */
+    purity: number;
     date?: Date;
     notes?: string;
 }
