@@ -160,6 +160,17 @@ const shopDetailSchema = new Schema<IShopDetail>(
             type: Boolean,
         },
 
+        // Which tab a new sale opens on. A silver wholesaler sells little or
+        // no gold, and making them switch tabs on every sale is a tax on the
+        // one screen they use most. No default, as above: undefined is gold.
+        defaultMetal: {
+            type: String,
+            enum: {
+                values: ["gold", "silver"],
+                message: "{VALUE} is not a supported metal",
+            },
+        },
+
         createdAt: {
             type: Date,
             default: Date.now,

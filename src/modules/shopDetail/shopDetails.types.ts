@@ -30,6 +30,8 @@ export interface IShopDetail {
     /** Whether this wholesaler takes old ornaments for melt. Undefined on a
      *  shop that has never answered, which the app reads as off. */
     oldGoldMelt?: boolean;
+    /** The tab a new sale opens on. Undefined means gold. */
+    defaultMetal?: "gold" | "silver";
     createdAt?: Date;
 }
 
@@ -56,6 +58,7 @@ export interface UpdateShopPreferencesDTO {
     appLanguage?: ShopLanguage;
     declarationLanguage?: ShopLanguage;
     oldGoldMelt?: boolean;
+    defaultMetal?: "gold" | "silver";
 }
 
 export type CreateShopDetailDTO = IShopDetail;

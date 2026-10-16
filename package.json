@@ -18,6 +18,7 @@
     "audit:item-plausibility": "ts-node scripts/audit-item-plausibility.ts",
     "verify:pricing": "ts-node scripts/verify-gold-pricing.ts",
     "verify:order": "node scripts/verify-wholesale-order.js",
+    "verify:silver": "node scripts/verify-silver-order.js",
     "verify:dues": "node scripts/verify-dues.js",
     "verify:ledger": "node scripts/verify-ledger.js",
     "seed:demo": "node scripts/seed-demo-data.js",

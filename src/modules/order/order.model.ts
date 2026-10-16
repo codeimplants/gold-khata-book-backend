@@ -6,6 +6,11 @@ import {
     priceInboundMetal,
     SETTLEMENT_FINENESS,
 } from "../../common/utils/goldPricing";
+import {
+    isSilverItem,
+    silverLineValue,
+    totalSilverWeight,
+} from "../../common/utils/silverPricing";
 
 /**
  * Grams below which an advance order counts as fully settled.
@@ -34,6 +39,18 @@ export const WEIGHT_SETTLED_EPSILON_GM = 0.0005;
 export const RATE_EPSILON = 0.001;
 
 /**
+ * The silver counterpart of weightedItemRate: sum(net x rate) / sum(net) over
+ * the silver lines. It prices the silver still owed, and cash paid towards
+ * silver buys grams at this rate.
+ */
+export function weightedSilverRate(items: any, fallbackRate: any = 0): number {
+    const list: any[] = (Array.isArray(items) ? items : []).filter(isSilverItem);
+    const net = list.reduce((s, i) => s + (Number(i.weight) || 0), 0);
+    if (net <= 0) return Number(fallbackRate) || 0;
+    return list.reduce((s, i) => s + (Number(i.weight) || 0) * (Number(i.rate) || 0), 0) / net;
+}
+
+/**
  * Weighted-average rate across an order's items (Σ netWt·rate / Σ netWt) — the
  * same "effective rate" the create-order screen shows, so client and server
  * agree on what a multi-item order's single rate is.
@@ -43,7 +60,9 @@ export const RATE_EPSILON = 0.001;
  * routes computing the same figure slightly differently.
  */
 export function weightedItemRate(items: any, fallbackRate: any = 0): number {
-    const list: any[] = Array.isArray(items) ? items : [];
+    // Gold lines only. A silver line's rate is per gram of silver, and mixing
+    // it in would drag the gold rate down to a figure that prices neither metal.
+    const list: any[] = (Array.isArray(items) ? items : []).filter((i: any) => !isSilverItem(i));
     const totalNetWt = list.reduce((s, i) => s + (Number(i.weight) || 0), 0);
     if (totalNetWt <= 0) return Number(fallbackRate) || 0;
     return (
@@ -115,8 +134,16 @@ const AdvancePaymentSchema = new Schema<AdvancePayment>(
         settles: {
             type: String,
             required: false,
-            enum: ["metal", "cash"],
+            enum: ["metal", "cash", "silver"],
             default: "metal",
+        },
+        // Silver handed over as this payment, in grams. It is credited to the
+        // silver account gram for gram: the sale charged net weight with no
+        // purity, so the silver coming back is counted the same way.
+        silverWeight: {
+            type: Number,
+            required: false,
+            min: 0,
         },
     },
     { _id: true }
@@ -124,6 +151,23 @@ const AdvancePaymentSchema = new Schema<AdvancePayment>(
 
 const OrderItemSchema = new Schema(
     {
+        // Which metal this line is. Missing on every line saved before silver
+        // existed, and those are gold, hence the default.
+        metal: {
+            type: String,
+            required: false,
+            enum: ["gold", "silver"],
+            default: "gold",
+        },
+
+        // Silver lines only: pieces, and the weights the net was worked out
+        // from. On a silver line `weight` is the NET weight, the grams owed.
+        quantity: { type: Number, required: false, min: 0 },
+        grossWeight: { type: Number, required: false, min: 0 },
+        packetWeight: { type: Number, required: false, min: 0 },
+        // Net x rate, stored so a bill reprints without re-deriving it.
+        silverValue: { type: Number, required: false, min: 0 },
+
         itemName: {
             type: String,
             required: true,
@@ -142,9 +186,11 @@ const OrderItemSchema = new Schema(
         // Purity as entered, in percent: 91.6 for 22K, not the string "22K".
         // The wholesaler's uplift is applied on top (goldPricing.chargedPurity)
         // and is never stored here — this stays what the metal actually is.
+        // Not used on a silver line, which is priced by net weight alone.
         purity: {
             type: Number,
-            required: true,
+            required: false,
+            default: 0,
             min: 0,
             max: 100,
         },
@@ -290,6 +336,13 @@ const OrderSchema = new Schema<Order>(
             min: 0,
         },
 
+        // The SILVER account, beside the gold one and never added to it. In
+        // grams of silver: net weight sold, less silver handed over and silver
+        // bought down with cash. See silverPricing.ts.
+        totalSilverWeight: { type: Number, required: false, default: 0, min: 0 },
+        silverWeightPaid: { type: Number, required: false, default: 0, min: 0 },
+        remainingSilverWeight: { type: Number, required: false, default: 0, min: 0 },
+
         // Cash received against the charges account.
         cashPaid: {
             type: Number,
@@ -405,12 +458,15 @@ OrderSchema.index({ customerId: 1, status: 1 });
 // Pre-save middleware to calculate totals
 OrderSchema.pre("save", function (this: any) {
     // Calculate total weight from items if not manually set (though usually handled by items)
+    const goldItems = ((this.items || []) as any[]).filter((i: any) => !isSilverItem(i));
     if (this.items && this.items.length > 0) {
         // The METAL account is denominated in fine 99.50, not in the
         // ornaments' own grams — that is the unit every payment, melt credit
         // and settlement is expressed in. Summing raw weights here would put
         // the account in one unit and everything drawn against it in another.
-        this.totalWeight = totalFine995(this.items as any);
+        //
+        // Gold lines only; silver keeps its own account below.
+        this.totalWeight = totalFine995(goldItems as any);
     }
 
     // Sort payments by date to ensure history is chronological
@@ -465,7 +521,9 @@ OrderSchema.pre("save", function (this: any) {
     // pay the same rupee down twice, once against each account.
     const weightFromPayments = paymentsArr.reduce(
         (sum: number, payment: any) =>
-            sum + (payment.settles === "cash" ? 0 : (payment.weightCovered || 0)),
+            sum + (payment.settles === "cash" || payment.settles === "silver"
+                ? 0
+                : (payment.weightCovered || 0)),
         0
     );
 
@@ -478,6 +536,21 @@ OrderSchema.pre("save", function (this: any) {
     const weightedRate = weightedItemRate(this.items, this.bookingRate);
 
     this.weightPaid = weightFromPayments + weightFromMetal;
+
+    // The silver account: cash aimed at silver (as the grams it bought) plus
+    // silver handed over. Unrounded, for the same reason as weightPaid above.
+    this.totalSilverWeight = totalSilverWeight(this.items as any);
+    this.silverWeightPaid = paymentsArr.reduce(
+        (sum: number, payment: any) =>
+            sum +
+            (payment.settles === "silver" ? (payment.weightCovered || 0) : 0) +
+            (Number(payment.silverWeight) || 0),
+        0,
+    );
+    this.remainingSilverWeight = Math.max(
+        0,
+        (this.totalSilverWeight || 0) - (this.silverWeightPaid || 0),
+    );
 
     // Calculate remaining weight
     this.remainingWeight = Math.max(0, (this.totalWeight || 0) - (this.weightPaid || 0));
@@ -499,8 +572,15 @@ OrderSchema.pre("save", function (this: any) {
     // reprinted, and a dispute answered, without re-deriving from rules that
     // may have moved since.
     let totalGoldValue = 0;
+    let totalSilverValue = 0;
     if (this.items && this.items.length > 0) {
         for (const it of this.items as any[]) {
+            if (isSilverItem(it)) {
+                // Net weight x rate and nothing else: see silverPricing.ts.
+                it.silverValue = silverLineValue(it.weight || 0, it.rate || 0);
+                totalSilverValue += it.silverValue;
+                continue;
+            }
             const priced = priceLine({
                 weight: it.weight || 0,
                 purity: it.purity || 0,
@@ -519,7 +599,7 @@ OrderSchema.pre("save", function (this: any) {
     // A wholesale line is metal and nothing else — no making charge, no other
     // charges, no discount. Wastage IS the labour, and it is already inside
     // the fine weight above rather than sitting beside it in rupees.
-    const itemsSubtotal = totalGoldValue;
+    const itemsSubtotal = totalGoldValue + totalSilverValue;
     this.estimatedMakingCharges = 0;
 
     const subtotalBeforeGst = Math.max(0, itemsSubtotal);
@@ -533,7 +613,8 @@ OrderSchema.pre("save", function (this: any) {
 
     // Everything on an item that is not the metal itself: making, other charges
     // and discounts are properties of the order, not of the weight still owed.
-    const nonGoldCharges = itemsSubtotal - totalGoldValue;
+    // Silver is owed as silver, in its own account, so it is not a charge.
+    const nonGoldCharges = itemsSubtotal - totalGoldValue - totalSilverValue;
 
     // The CASH account. Making, other charges and GST are owed as money, so
     // they are held here rather than converted into grams and folded into the
@@ -574,8 +655,15 @@ OrderSchema.pre("save", function (this: any) {
         // carries the charges net of anything paid against them, so GST is not
         // added again here: it is quoted on the total at the booking rate and
         // lives in that account from the moment the order is raised.
+        const silverOutstanding =
+            this.remainingSilverWeight < WEIGHT_SETTLED_EPSILON_GM ? 0 : this.remainingSilverWeight;
+
         this.estimatedBalance = Number(
-            (metalOutstanding * weightedRate + this.outstandingCash).toFixed(3),
+            (
+                metalOutstanding * weightedRate +
+                silverOutstanding * weightedSilverRate(this.items) +
+                this.outstandingCash
+            ).toFixed(3),
         );
     } else {
         this.estimatedBalance = Number(Math.max(0, totalAmount - (this.totalPaid || 0)).toFixed(3));

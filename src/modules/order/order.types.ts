@@ -32,18 +32,34 @@ export interface AdvancePayment {
      * Defaults to "metal" because that is what an advance payment has always
      * meant here; a payment that is meant to clear charges has to say so.
      */
-    settles?: "metal" | "cash";
+    /** "silver": the cash buys silver grams down at `goldRate`, which on such
+     *  a payment is the silver rate per gram. It never touches the gold account. */
+    settles?: "metal" | "cash" | "silver";
+
+    /** Silver handed over as this payment, in grams, credited gram for gram. */
+    silverWeight?: number;
 }
 
 export type OrderStatus = "pending" | "completed" | "cancelled";
 export type PaymentMode = "complete" | "advance";
 
 export interface OrderItem {
+    /** Missing means gold: every line saved before silver existed is gold. */
+    metal?: "gold" | "silver";
     itemName: string;
-    /** As weighed, in grams. Not what the retailer is charged for. */
+    /**
+     * Gold: as weighed, in grams, not what the retailer is charged for.
+     * Silver: the NET weight, which is exactly the grams owed.
+     */
     weight: number;
-    /** Purity as entered, in percent — 91.6 for 22K. Uplift applied on top. */
-    purity: number;
+    /** Gold only. Purity as entered, in percent — 91.6 for 22K. */
+    purity?: number;
+    /** Silver only: pieces, and the weights net was worked out from. */
+    quantity?: number;
+    grossWeight?: number;
+    packetWeight?: number;
+    /** Silver only, derived: net x rate. */
+    silverValue?: number;
     /** Wastage / Tunch in percent, ADDED to the charged purity. */
     wastage?: number;
     /** Rupees per gram of 99.50 fine. */
@@ -89,6 +105,10 @@ export interface Order {
      * rupees. See `outstandingCash` for the other half.
      */
     remainingWeight: number;
+    /** The SILVER account, in grams of silver, independent of the gold one. */
+    totalSilverWeight?: number;
+    silverWeightPaid?: number;
+    remainingSilverWeight?: number;
     /** Grams of excess already turned into retailer credit — see the model. */
     creditedExcessWeight: number;
     /** Cash received against the charges account. */
@@ -164,8 +184,10 @@ export interface AddPaymentDTO {
     goldWeight?: number;
     /** Purity of that metal in percent. */
     goldPurity?: number;
+    /** Silver received, in grams. */
+    silverWeight?: number;
     /** Which account the cash settles — see AdvancePayment. */
-    settles?: "metal" | "cash";
+    settles?: "metal" | "cash" | "silver";
     date?: Date;
     paymentType?: "advance" | "final" | "credit";
     notes?: string;

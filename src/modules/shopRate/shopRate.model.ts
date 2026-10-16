@@ -25,6 +25,10 @@ export interface ShopRate {
     /** Rupees per gram of 99.50, the unit everything else here is quoted in. */
     goldRate: number;
 
+    /** Rupees per gram of silver. Set on its own: a shop can fix one metal's
+     *  rate for the day and leave the other on the live feed. 0 = not set. */
+    silverRate?: number;
+
     notes?: string;
 
     createdAt: Date;
@@ -43,7 +47,10 @@ const ShopRateSchema = new Schema<ShopRate>(
             match: [/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"],
         },
 
-        goldRate: { type: Number, required: true, min: 0 },
+        // 0 when only the silver rate was set for the day; the app reads 0 as
+        // "not set" and falls back to the live rate.
+        goldRate: { type: Number, required: false, default: 0, min: 0 },
+        silverRate: { type: Number, required: false, default: 0, min: 0 },
         notes: { type: String, required: false, trim: true },
     },
     { timestamps: true },

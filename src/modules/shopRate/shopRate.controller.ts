@@ -15,10 +15,15 @@ const getSchema = z.object({
 
 const setSchema = z.object({
     date: dayString.optional(),
-    goldRate: z.number().positive("Enter a rate"),
+    // Either or both. Sending only one leaves the other as it was.
+    goldRate: z.number().positive("Enter a rate").optional(),
+    silverRate: z.number().positive("Enter a rate").optional(),
     notes: z.string().trim().max(INPUT_LIMITS.notes).optional(),
     dukandarId: z.string().optional(),
-});
+}).refine(
+    (b) => b.goldRate !== undefined || b.silverRate !== undefined,
+    { message: "Enter a rate" },
+);
 
 /**
  * Today in the SERVER's calendar.
@@ -43,11 +48,11 @@ export const ShopRateController = {
     }),
 
     set: asyncHandler(async (req: Request, res: Response<ApiResponse<unknown>>) => {
-        const { date, goldRate, notes, dukandarId } = setSchema.parse(req.body);
+        const { date, goldRate, silverRate, notes, dukandarId } = setSchema.parse(req.body);
         const rate = await ShopRateService.setForDate(
             req.auth!.sub,
             date || today(),
-            goldRate,
+            { goldRate, silverRate },
             { notes, dukandarId },
         );
         res.status(200).json({ success: true, data: rate, message: "Rate saved" });

@@ -33,6 +33,13 @@ If you find yourself adding a rupee field that represents metal, or a gram
 field that has already been priced, stop — that is the mistake this model
 exists to prevent.
 
+**Silver is the one exception, and it is a separate account** (2026-10-16): a
+line with `metal: "silver"` is net weight at a rate per gram of silver, owed as
+grams of silver in `totalSilverWeight` / `remainingSilverWeight`, settled by
+payments with `settles: "silver"`. It never enters `totalWeight` or the gold
+weighted rate. `src/common/utils/silverPricing.ts`; `npm run verify:silver`;
+section 12 of the frontend's `APP_STORE_4.3_REWORK.md`.
+
 ## Pricing: `src/common/utils/goldPricing.ts`
 
 The whole chain, both directions, in one file. It is covered by

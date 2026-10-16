@@ -26,14 +26,17 @@ export const ShopRateService = {
     async setForDate(
         userId: string,
         date: string,
-        goldRate: number,
+        rates: { goldRate?: number; silverRate?: number },
         opts: { notes?: string; dukandarId?: string } = {},
     ) {
         return ShopRateModel.findOneAndUpdate(
             { userId: oid(userId), date },
             {
                 $set: {
-                    goldRate,
+                    // Only the rate sent: setting today's silver rate must not
+                    // wipe the gold rate set this morning, or the reverse.
+                    ...(rates.goldRate !== undefined ? { goldRate: rates.goldRate } : {}),
+                    ...(rates.silverRate !== undefined ? { silverRate: rates.silverRate } : {}),
                     ...(opts.notes !== undefined ? { notes: opts.notes } : {}),
                     ...(opts.dukandarId ? { dukandarId: oid(opts.dukandarId) } : {}),
                 },

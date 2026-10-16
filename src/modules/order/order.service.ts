@@ -277,7 +277,9 @@ export const OrderService = {
         const settles = payload.settles || "metal";
 
         // Only cash aimed at metal converts to grams. Cash clearing the charges
-        // account buys no weight, so it carries none.
+        // account buys no weight, so it carries none. Cash aimed at silver
+        // converts at `goldRate`, which on that payment is the silver rate; the
+        // model files those grams under silver, never gold.
         const weightCovered =
             settles !== "cash" && payload.goldRate > 0
                 ? (payload.amount / payload.goldRate)
@@ -291,6 +293,7 @@ export const OrderService = {
             weightCovered,
             goldWeight: payload.goldWeight,
             goldPurity: payload.goldPurity,
+            silverWeight: payload.silverWeight,
             settles,
             paymentType: payload.paymentType || "advance",
             notes: payload.notes,
@@ -308,8 +311,12 @@ export const OrderService = {
         // to 3dp — see WEIGHT_SETTLED_EPSILON_GM.
         const metalSettled = order.totalWeight - order.weightPaid < WEIGHT_SETTLED_EPSILON_GM;
         const cashSettled = (order.outstandingCash || 0) <= 0;
+        // Silver is a third account, and an order that still owes silver is
+        // not finished however clear its gold is.
+        const silverSettled =
+            (order.totalSilverWeight || 0) - (order.silverWeightPaid || 0) < WEIGHT_SETTLED_EPSILON_GM;
 
-        if (metalSettled && cashSettled) {
+        if (metalSettled && cashSettled && silverSettled) {
             order.status = "completed";
             order.completedAt = new Date();
             await order.save();
