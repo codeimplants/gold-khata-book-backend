@@ -44,6 +44,13 @@ export interface RetailerAccount {
      */
     meltCredit: number;
 
+    /**
+     * Grams of SILVER held for the retailer and not yet used: a silver
+     * advance (`silver-received`). Its own balance, never added to gold's;
+     * drawn down onto a sale's silver due gram for gram, or handed back.
+     */
+    silverHeld: number;
+
     entries: AccountEntry[];
 
     createdAt: Date;
@@ -69,7 +76,14 @@ export type AccountEntryType =
      * Credited at 99.50 by the inbound rule, exactly as a metal payment on an
      * order would be, and drawn down the same way melt credit is.
      */
-    | "gold-received";
+    | "gold-received"
+    /** Silver handed over and held: a silver advance. Gram for gram, as a
+     *  silver sale is charged by net weight with no purity. */
+    | "silver-received"
+    /** Silver held drawn down onto a sale's silver due. */
+    | "silver-applied"
+    /** Silver held handed back to the retailer. */
+    | "silver-returned";
 
 /**
  * The weighings behind one melt lot, kept because every one of them is a figure
@@ -118,6 +132,10 @@ export interface AccountEntry {
     cashDelta: number;
     /** Grams of 99.50 moved, same sign convention. */
     metalDelta: number;
+    /** Grams of silver moved, same sign convention. */
+    silverDelta?: number;
+    /** `cash-allocated` only: the metal the cash bought. Missing = gold. */
+    metal?: "gold" | "silver";
 
     /** The rate a conversion happened at, when one did. */
     rate?: number;
@@ -160,8 +178,26 @@ export interface AllocateCashDTO {
     orderId: string;
     /** Rupees of held cash to apply. */
     amount: number;
-    /** Rate on the day of allocation — what the cash buys metal at. */
+    /** Rate on the day of allocation — what the cash buys metal at. On a
+     *  silver allocation it is the silver rate per gram. */
     goldRate: number;
+    /** Which of the sale's dues the cash buys down. Missing = gold. */
+    metal?: "gold" | "silver";
+    date?: Date;
+    notes?: string;
+}
+
+/** Silver handed over and held, or handed back: grams of silver. */
+export interface SilverHeldDTO {
+    weight: number;
+    date?: Date;
+    notes?: string;
+}
+
+export interface ApplySilverHeldDTO {
+    orderId: string;
+    /** Grams of silver to draw down onto the sale's silver due. */
+    weight: number;
     date?: Date;
     notes?: string;
 }

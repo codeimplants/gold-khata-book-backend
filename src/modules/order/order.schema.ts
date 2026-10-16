@@ -12,8 +12,15 @@ export const createOrderItemSchema = z.object({
     purity: z.number().min(0).max(100, "Purity cannot exceed 100").optional().default(0),
     wastage: z.number().min(0).optional().default(0),
     rate: z.number().min(0).optional(),
-    // Silver only. `weight` carries the net weight on a silver line.
+    // Pieces on the line, gold or silver. On a silver line `weight` carries
+    // the net weight.
     quantity: z.number().min(0).optional(),
+    // A line weighed piece by piece. The server sums these into the line's
+    // weights; 200 is far past any line the app offers rows for.
+    pieceWeights: z.array(z.object({
+        weight: z.number().min(0),
+        packetWeight: z.number().min(0).optional(),
+    })).max(200).optional(),
     grossWeight: z.number().min(0).optional(),
     packetWeight: z.number().min(0).optional(),
 }).refine(

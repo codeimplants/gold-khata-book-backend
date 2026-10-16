@@ -38,7 +38,9 @@ line with `metal: "silver"` is net weight at a rate per gram of silver, owed as
 grams of silver in `totalSilverWeight` / `remainingSilverWeight`, settled by
 payments with `settles: "silver"`. It never enters `totalWeight` or the gold
 weighted rate. `src/common/utils/silverPricing.ts`; `npm run verify:silver`;
-section 12 of the frontend's `APP_STORE_4.3_REWORK.md`.
+section 12 of the frontend's `APP_STORE_4.3_REWORK.md`. The retailer account
+holds silver too (`silverHeld`, from `silverDelta` on its entries), never in
+`meltCredit`.
 
 ## Pricing: `src/common/utils/goldPricing.ts`
 

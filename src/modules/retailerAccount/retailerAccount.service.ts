@@ -9,6 +9,8 @@ import type {
     ReceiveGoldDTO,
     AllocateCashDTO,
     ApplyMeltCreditDTO,
+    SilverHeldDTO,
+    ApplySilverHeldDTO,
     MeltLot,
 } from "./retailerAccount.types";
 import { OrderService } from "../order/order.service";
@@ -155,8 +157,11 @@ export const RetailerAccountService = {
                 code: "BAD_REQUEST",
             });
         }
+        const silver = payload.metal === "silver";
         if (!payload.goldRate || payload.goldRate <= 0) {
-            throw new AppError("A gold rate is required to allocate cash against metal", {
+            throw new AppError(silver
+                ? "A silver rate is required to allocate cash against silver"
+                : "A gold rate is required to allocate cash against metal", {
                 statusCode: 400,
                 code: "BAD_REQUEST",
             });
@@ -177,7 +182,9 @@ export const RetailerAccountService = {
             {
                 amount: payload.amount,
                 goldRate: payload.goldRate,
-                settles: "metal",
+                // Silver's due is its own account: the same cash, filed under
+                // silver at the silver rate, never gold at a silver rate.
+                settles: silver ? "silver" : "metal",
                 date: payload.date,
                 // Marks the payment as money already held, not money handed
                 // over today: the day book counted it when it came in.
@@ -192,6 +199,7 @@ export const RetailerAccountService = {
             type: "cash-allocated",
             cashDelta: -payload.amount,
             metalDelta: 0,
+            ...(silver ? { metal: "silver" as const } : {}),
             rate: payload.goldRate,
             orderId: oid(payload.orderId),
             notes: payload.notes,
@@ -199,6 +207,121 @@ export const RetailerAccountService = {
         await account.save();
 
         return { account, order };
+    },
+
+    /**
+     * Silver in, held rather than set against a bill: a silver advance.
+     *
+     * Gram for gram, with no purity: a silver sale charges net weight and
+     * nothing else (silverPricing.ts), so the silver coming in is counted the
+     * same way. Applying it later is applySilverHeld.
+     */
+    async receiveSilver(
+        userId: string,
+        customerId: string,
+        payload: SilverHeldDTO,
+        dukandarId?: string,
+    ) {
+        if (!payload.weight || payload.weight <= 0) {
+            throw new AppError("Enter the weight of the silver", { statusCode: 400, code: "BAD_REQUEST" });
+        }
+        const account = await this.getAccount(userId, customerId, dukandarId);
+        account.entries.push({
+            date: payload.date || new Date(),
+            type: "silver-received",
+            cashDelta: 0,
+            metalDelta: 0,
+            silverDelta: payload.weight,
+            notes: payload.notes,
+        });
+        await account.save();
+        return account;
+    },
+
+    /**
+     * Draws silver held down onto a sale's silver due, gram for gram.
+     *
+     * Through OrderService.addPayment as a silver payment, for the same reason
+     * allocateCash goes through it: the completion rule lives there. Order
+     * first, so a refused payment never draws the account down.
+     */
+    async applySilverHeld(
+        userId: string,
+        customerId: string,
+        payload: ApplySilverHeldDTO,
+        dukandarId?: string,
+    ) {
+        const account = await this.getAccount(userId, customerId, dukandarId);
+
+        if (!payload.weight || payload.weight <= 0) {
+            throw new AppError("Enter a weight to apply", { statusCode: 400, code: "BAD_REQUEST" });
+        }
+        if (payload.weight > (account.silverHeld || 0) + WEIGHT_SETTLED_EPSILON_GM) {
+            throw new AppError(
+                `Only ${(account.silverHeld || 0).toFixed(3)} gm of silver is held for this retailer`,
+                { statusCode: 400, code: "BAD_REQUEST" },
+            );
+        }
+
+        const order = await OrderService.addPayment(
+            userId,
+            payload.orderId,
+            {
+                amount: 0,
+                goldRate: 0,
+                silverWeight: payload.weight,
+                settles: "silver",
+                date: payload.date,
+                // Silver already held, counted when it came in. See allocateCash.
+                paymentType: "credit",
+                notes: payload.notes || "Applied from silver held",
+            },
+            dukandarId,
+        );
+
+        account.entries.push({
+            date: payload.date || new Date(),
+            type: "silver-applied",
+            cashDelta: 0,
+            metalDelta: 0,
+            silverDelta: -payload.weight,
+            orderId: oid(payload.orderId),
+            notes: payload.notes,
+        });
+        await account.save();
+
+        return { account, order };
+    },
+
+    /** Silver held handed back to the retailer rather than used. */
+    async returnSilver(
+        userId: string,
+        customerId: string,
+        payload: SilverHeldDTO,
+        dukandarId?: string,
+    ) {
+        const account = await this.getAccount(userId, customerId, dukandarId);
+
+        if (!payload.weight || payload.weight <= 0) {
+            throw new AppError("Enter a weight to return", { statusCode: 400, code: "BAD_REQUEST" });
+        }
+        if (payload.weight > (account.silverHeld || 0) + WEIGHT_SETTLED_EPSILON_GM) {
+            throw new AppError(
+                `Only ${(account.silverHeld || 0).toFixed(3)} gm of silver is held for this retailer`,
+                { statusCode: 400, code: "BAD_REQUEST" },
+            );
+        }
+
+        account.entries.push({
+            date: payload.date || new Date(),
+            type: "silver-returned",
+            cashDelta: 0,
+            metalDelta: 0,
+            silverDelta: -payload.weight,
+            notes: payload.notes,
+        });
+        await account.save();
+        return account;
     },
 
     /** Held cash handed back rather than spent. */

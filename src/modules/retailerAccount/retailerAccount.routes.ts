@@ -25,6 +25,12 @@ router.post("/:customerId/gold", RetailerAccountController.receiveGold);
 router.post("/:customerId/cash/allocate", RetailerAccountController.allocateCash);
 router.post("/:customerId/cash/refund", RetailerAccountController.refundCash);
 
+// Silver in, held as an advance; drawn down onto a sale's silver due, or
+// handed back. Its own balance, in grams of silver.
+router.post("/:customerId/silver", RetailerAccountController.receiveSilver);
+router.post("/:customerId/silver/apply", RetailerAccountController.applySilverHeld);
+router.post("/:customerId/silver/return", RetailerAccountController.returnSilver);
+
 // Melt credit in, then drawn down onto an order or taken out.
 router.post("/:customerId/melt", RetailerAccountController.creditMelt);
 router.post("/:customerId/melt/apply", RetailerAccountController.applyMeltCredit);

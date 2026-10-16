@@ -168,6 +168,23 @@ const OrderItemSchema = new Schema(
         // Net x rate, stored so a bill reprints without re-deriving it.
         silverValue: { type: Number, required: false, min: 0 },
 
+        // The pieces of a line weighed one at a time, in the order weighed.
+        // `weight` is the piece as weighed (gold) or its gross (silver), and
+        // `packetWeight` is a silver piece's packet. When present, the line's
+        // weights are their sums, worked out in the pre-save hook rather than
+        // trusted from the client. Absent on a line weighed as one lot.
+        pieceWeights: {
+            type: [
+                {
+                    weight: { type: Number, required: true, min: 0 },
+                    packetWeight: { type: Number, required: false, min: 0 },
+                },
+            ],
+            required: false,
+            default: undefined,
+            _id: false,
+        },
+
         itemName: {
             type: String,
             required: true,
@@ -342,6 +359,10 @@ const OrderSchema = new Schema<Order>(
         totalSilverWeight: { type: Number, required: false, default: 0, min: 0 },
         silverWeightPaid: { type: Number, required: false, default: 0, min: 0 },
         remainingSilverWeight: { type: Number, required: false, default: 0, min: 0 },
+        // Grams of silver overpaid and already turned into held cash: the
+        // silver twin of creditedExcessWeight, so a re-save never credits the
+        // same surplus twice.
+        creditedExcessSilverWeight: { type: Number, required: false, default: 0, min: 0 },
 
         // Cash received against the charges account.
         cashPaid: {
@@ -458,6 +479,25 @@ OrderSchema.index({ customerId: 1, status: 1 });
 // Pre-save middleware to calculate totals
 OrderSchema.pre("save", function (this: any) {
     // Calculate total weight from items if not manually set (though usually handled by items)
+    // A line weighed piece by piece takes its weights from its pieces: the
+    // pieces are what was weighed, so the totals cannot disagree with them.
+    // Before anything below reads `weight`.
+    for (const it of (this.items || []) as any[]) {
+        const pieces: any[] = Array.isArray(it.pieceWeights) ? it.pieceWeights : [];
+        if (pieces.length === 0) continue;
+        const r3 = (n: number) => Number((Number(n) || 0).toFixed(3));
+        const gross = r3(pieces.reduce((s, p) => s + (Number(p.weight) || 0), 0));
+        it.quantity = pieces.length;
+        if (isSilverItem(it)) {
+            it.grossWeight = gross;
+            it.packetWeight = r3(pieces.reduce((s, p) => s + (Number(p.packetWeight) || 0), 0));
+            it.weight = r3(pieces.reduce(
+                (s, p) => s + Math.max(0, (Number(p.weight) || 0) - (Number(p.packetWeight) || 0)), 0));
+        } else {
+            it.weight = gross;
+        }
+    }
+
     const goldItems = ((this.items || []) as any[]).filter((i: any) => !isSilverItem(i));
     if (this.items && this.items.length > 0) {
         // The METAL account is denominated in fine 99.50, not in the

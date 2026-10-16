@@ -4,6 +4,7 @@ import {
     WEIGHT_SETTLED_EPSILON_GM,
     RATE_EPSILON,
     weightedItemRate,
+    weightedSilverRate,
 } from "./order.model";
 import type {
     CreateOrderDTO,
@@ -206,11 +207,26 @@ export const OrderService = {
      * be written would lose the payment to save the bookkeeping.
      */
     async creditOverpayment(order: any, userId: string, dukandarId?: string) {
-        const excess = (order.weightPaid || 0) - (order.totalWeight || 0);
-        const delta = excess - (order.creditedExcessWeight || 0);
+        await this.creditExcess(order, userId, dukandarId, "gold");
+        // Silver the same way: grams paid beyond the silver sold, priced at
+        // the silver lines' own rate. Before this, overpaying silver left
+        // remainingSilverWeight at 0 and the surplus recorded nowhere.
+        await this.creditExcess(order, userId, dukandarId, "silver");
+    },
+
+    /** One metal's surplus, credited once. See creditOverpayment. */
+    async creditExcess(order: any, userId: string, dukandarId: string | undefined, metal: "gold" | "silver") {
+        const silver = metal === "silver";
+        const excess = silver
+            ? (order.silverWeightPaid || 0) - (order.totalSilverWeight || 0)
+            : (order.weightPaid || 0) - (order.totalWeight || 0);
+        const credited = silver ? (order.creditedExcessSilverWeight || 0) : (order.creditedExcessWeight || 0);
+        const delta = excess - credited;
         if (delta <= WEIGHT_SETTLED_EPSILON_GM) return;
 
-        const rate = weightedItemRate(order.items, order.bookingRate) || order.bookingRate || 0;
+        const rate = silver
+            ? weightedSilverRate(order.items, 0)
+            : weightedItemRate(order.items, order.bookingRate) || order.bookingRate || 0;
         if (rate <= 0) return;
 
         const amount = Number((delta * rate).toFixed(2));
@@ -238,7 +254,7 @@ export const OrderService = {
                             .sort((a: number, b: number) => b - a)[0];
                         return last ? new Date(last) : new Date();
                     })(),
-                    notes: `Overpaid on ${order.orderNumber || "order"}`,
+                    notes: `Overpaid${silver ? " silver" : ""} on ${order.orderNumber || "order"}`,
                     // So the day book reads this as a surplus moved across,
                     // not as cash handed over a second time.
                     orderId: String(order._id),
@@ -246,7 +262,8 @@ export const OrderService = {
                 dukandarId,
             );
 
-            order.creditedExcessWeight = excess;
+            if (silver) order.creditedExcessSilverWeight = excess;
+            else order.creditedExcessWeight = excess;
             await order.save();
         } catch (err) {
             console.warn(
@@ -307,12 +324,33 @@ export const OrderService = {
         // and GST, and closing zeroes both balances — the debt would not just be
         // hidden, it would be erased.
         //
-        // Weight is compared with a tolerance because weightPaid is not rounded
-        // to 3dp — see WEIGHT_SETTLED_EPSILON_GM.
+        await this.completeIfClear(order);
+
+        // After the status write, so a payment that both settles and overpays
+        // records the surplus against a completed order rather than a pending
+        // one — which is what the retailer's statement then reads.
+        await this.creditOverpayment(order, userId, dukandarId);
+
+        return order.populate("customerId");
+    },
+
+    /**
+     * Closes an order once every account on it is clear: gold, cash and silver.
+     *
+     * Completing on settled metal alone would close orders that still owe
+     * making charges and GST, and closing zeroes both balances, so the debt
+     * would not just be hidden, it would be erased. Silver is a third account,
+     * and an order that still owes silver is not finished however clear its
+     * gold is.
+     *
+     * Weight is compared with a tolerance because weightPaid is not rounded
+     * to 3dp; see WEIGHT_SETTLED_EPSILON_GM. Shared by a new payment and an
+     * edited one, so an edit that clears the last gram closes the order too.
+     */
+    async completeIfClear(order: any) {
+        if (order.status !== "pending") return;
         const metalSettled = order.totalWeight - order.weightPaid < WEIGHT_SETTLED_EPSILON_GM;
         const cashSettled = (order.outstandingCash || 0) <= 0;
-        // Silver is a third account, and an order that still owes silver is
-        // not finished however clear its gold is.
         const silverSettled =
             (order.totalSilverWeight || 0) - (order.silverWeightPaid || 0) < WEIGHT_SETTLED_EPSILON_GM;
 
@@ -321,13 +359,6 @@ export const OrderService = {
             order.completedAt = new Date();
             await order.save();
         }
-
-        // After the status write, so a payment that both settles and overpays
-        // records the surplus against a completed order rather than a pending
-        // one — which is what the retailer's statement then reads.
-        await this.creditOverpayment(order, userId, dukandarId);
-
-        return order.populate("customerId");
     },
 
     /**
@@ -374,6 +405,22 @@ export const OrderService = {
         if (payload.goldRate !== undefined) payment.goldRate = payload.goldRate;
         if (payload.date !== undefined) payment.date = new Date(payload.date);
         if (payload.notes !== undefined) payment.notes = payload.notes;
+        // A silver receipt's metal leg. Only on a silver payment: silver
+        // grams on a gold payment would be counted by neither account.
+        if (payload.silverWeight !== undefined) {
+            const w = Number(payload.silverWeight);
+            if (!Number.isFinite(w) || w < 0) {
+                throw new AppError("Enter a silver weight of zero or more", { statusCode: 400, code: "BAD_REQUEST" });
+            }
+            if ((payment as any).settles !== "silver") {
+                throw new AppError("Only a silver receipt carries a silver weight", { statusCode: 400, code: "BAD_REQUEST" });
+            }
+            (payment as any).silverWeight = w;
+        }
+        if (((payment as any).amount || 0) <= 0 && ((payment as any).silverWeight || 0) <= 0
+            && ((payment as any).goldWeight || 0) <= 0) {
+            throw new AppError("A receipt of nothing is not a receipt; delete it instead", { statusCode: 400, code: "BAD_REQUEST" });
+        }
 
         // Recalculate weight covered if amount or rate changed
         if (payload.amount !== undefined || payload.goldRate !== undefined) {
@@ -382,6 +429,9 @@ export const OrderService = {
         }
 
         await order.save();
+        await this.completeIfClear(order);
+        // An edit can overpay as easily as a new receipt can.
+        await this.creditOverpayment(order, userId, dukandarId);
         return order.populate("customerId");
     },
 

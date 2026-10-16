@@ -32,6 +32,28 @@ export const allocateCashSchema = z.object({
     // happens at the rate of the day it is allocated, which is the entire
     // reason the retailer left the cash held rather than applying it.
     goldRate: z.number().positive("A gold rate is required"),
+    // Which due the cash buys down; `goldRate` is then that metal's rate.
+    metal: z.enum(["gold", "silver"]).optional(),
+    date: z.coerce.date().optional(),
+    notes,
+    dukandarId: z.string().optional(),
+});
+
+/**
+ * Silver left with the wholesaler and held, or handed back: grams of silver,
+ * counted gram for gram as a silver sale is.
+ */
+export const silverHeldSchema = z.object({
+    weight: z.number().positive("Enter a weight"),
+    date: z.coerce.date().optional(),
+    notes,
+    dukandarId: z.string().optional(),
+});
+
+export const applySilverHeldSchema = z.object({
+    orderId: z.string().min(24, "Invalid Order ID"),
+    /** Grams of silver to draw down. */
+    weight: z.number().positive("Enter a weight"),
     date: z.coerce.date().optional(),
     notes,
     dukandarId: z.string().optional(),

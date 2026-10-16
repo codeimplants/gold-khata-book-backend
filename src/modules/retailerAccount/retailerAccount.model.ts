@@ -26,6 +26,11 @@ const AccountEntrySchema = new Schema(
                 "melt-applied",
                 "melt-paid-out",
                 "gold-received",
+                // Silver held for the retailer: its own balance, in grams of
+                // silver, beside gold's and never added to it.
+                "silver-received",
+                "silver-applied",
+                "silver-returned",
             ],
         },
         // Signed: positive adds to what the wholesaler holds, negative draws
@@ -33,6 +38,13 @@ const AccountEntrySchema = new Schema(
         // wrong way is a bug worth seeing, not one worth hiding.
         cashDelta: { type: Number, required: true, default: 0 },
         metalDelta: { type: Number, required: true, default: 0 },
+        // Grams of SILVER moved, same sign convention. Separate from
+        // metalDelta, which is gold at 99.50: one number for two metals would
+        // be wrong for both.
+        silverDelta: { type: Number, required: false, default: 0 },
+        // Which metal a cash-allocated entry bought. Missing means gold, which
+        // is every allocation made before silver existed.
+        metal: { type: String, required: false, enum: ["gold", "silver"] },
 
         rate: { type: Number, required: false, min: 0 },
         orderId: { type: Schema.Types.ObjectId, required: false, ref: "Order" },
@@ -90,6 +102,9 @@ const RetailerAccountSchema = new Schema<RetailerAccount>(
         // an advance. Still named for melt because it is the wire format the
         // apps read; the entries say where each gram came from.
         meltCredit: { type: Number, required: true, default: 0, min: 0 },
+        // Grams of silver held for the retailer: a silver advance, not yet
+        // set against a sale. Recomputed from entries like the two above.
+        silverHeld: { type: Number, required: true, default: 0, min: 0 },
 
         entries: { type: [AccountEntrySchema], required: true, default: [] },
     },
@@ -114,12 +129,14 @@ RetailerAccountSchema.pre("save", function (this: any) {
 
     const cash = entries.reduce((sum, e) => sum + (Number(e.cashDelta) || 0), 0);
     const metal = entries.reduce((sum, e) => sum + (Number(e.metalDelta) || 0), 0);
+    const silver = entries.reduce((sum, e) => sum + (Number(e.silverDelta) || 0), 0);
 
     this.heldCash = Math.max(0, Number(cash.toFixed(2)));
     // Unrounded, for the same reason order weights are: the rupee figures
     // derived from this are `weight * rate`, and quantising the grams here
     // quantises the money.
     this.meltCredit = Math.max(0, metal);
+    this.silverHeld = Math.max(0, silver);
 });
 
 export const RetailerAccountModel = mongoose.model<RetailerAccount>(

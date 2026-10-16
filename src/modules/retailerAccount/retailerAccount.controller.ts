@@ -9,6 +9,8 @@ import {
     applyMeltCreditSchema,
     creditMeltSchema,
     payOutMeltSchema,
+    silverHeldSchema,
+    applySilverHeldSchema,
 } from "./retailerAccount.schema";
 
 export const RetailerAccountController = {
@@ -20,6 +22,48 @@ export const RetailerAccountController = {
                 req.query.dukandarId as string | undefined,
             );
             res.status(200).json({ success: true, data: accounts });
+        },
+    ),
+
+    /** Silver left as an advance, held until it is applied to a sale. */
+    receiveSilver: asyncHandler(
+        async (req: Request, res: Response<ApiResponse<unknown>>) => {
+            const { dukandarId, ...payload } = silverHeldSchema.parse(req.body);
+            const account = await RetailerAccountService.receiveSilver(
+                req.auth!.sub,
+                req.params.customerId,
+                payload,
+                dukandarId,
+            );
+            res.status(201).json({ success: true, data: account, message: "Silver received and held" });
+        },
+    ),
+
+    /** Silver held drawn down onto a sale's silver due. */
+    applySilverHeld: asyncHandler(
+        async (req: Request, res: Response<ApiResponse<unknown>>) => {
+            const { dukandarId, ...payload } = applySilverHeldSchema.parse(req.body);
+            const result = await RetailerAccountService.applySilverHeld(
+                req.auth!.sub,
+                req.params.customerId,
+                payload,
+                dukandarId,
+            );
+            res.status(200).json({ success: true, data: result, message: "Silver held applied" });
+        },
+    ),
+
+    /** Silver held handed back to the retailer. */
+    returnSilver: asyncHandler(
+        async (req: Request, res: Response<ApiResponse<unknown>>) => {
+            const { dukandarId, ...payload } = silverHeldSchema.parse(req.body);
+            const account = await RetailerAccountService.returnSilver(
+                req.auth!.sub,
+                req.params.customerId,
+                payload,
+                dukandarId,
+            );
+            res.status(200).json({ success: true, data: account, message: "Silver returned" });
         },
     ),
 

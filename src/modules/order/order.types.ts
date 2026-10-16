@@ -54,8 +54,12 @@ export interface OrderItem {
     weight: number;
     /** Gold only. Purity as entered, in percent — 91.6 for 22K. */
     purity?: number;
-    /** Silver only: pieces, and the weights net was worked out from. */
+    /** Pieces on the line (gold or silver). */
     quantity?: number;
+    /** A line weighed piece by piece: each piece as weighed (silver: gross)
+     *  and, on silver, its packet. The line's weights are their sums. */
+    pieceWeights?: { weight: number; packetWeight?: number }[];
+    /** Silver only: the weights net was worked out from. */
     grossWeight?: number;
     packetWeight?: number;
     /** Silver only, derived: net x rate. */
@@ -109,6 +113,8 @@ export interface Order {
     totalSilverWeight?: number;
     silverWeightPaid?: number;
     remainingSilverWeight?: number;
+    /** Grams of silver excess already turned into retailer credit. */
+    creditedExcessSilverWeight?: number;
     /** Grams of excess already turned into retailer credit — see the model. */
     creditedExcessWeight: number;
     /** Cash received against the charges account. */
