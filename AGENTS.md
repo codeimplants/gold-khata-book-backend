@@ -148,10 +148,18 @@ free for a preprod that does not currently exist — `src/config/db.ts` still
 accepts `NODE_ENV=preprod`, but nothing is deployed for it.
 
 `.env` is gitignored. JWT secrets are this product's own — SoneBill tokens do
-not authenticate here, which is intended. The 2Factor SMS account **is** shared
-with SoneBill, by decision, and **dev sends real SMS**: the dev-only local-OTP
-bypass was removed so that one OTP path serves every environment. Log in with
-`1234567890` / `123456` to avoid spending quota.
+not authenticate here, which is intended.
+
+**OTPs go through Code Implants Messaging** (msg.codeimplants.com,
+`src/common/messaging.ts`) in any environment whose `.env` sets
+`MESSAGING_API_KEY`, and straight to 2Factor until then. The 2Factor account
+**is** shared with SoneBill and Sone Taran, by decision, and messaging holds its
+key. On dev, messaging sends nothing and every code is `123456`. That is the
+owner's decision of 2026-10-21: no real SMS outside prod. Dev used to send real
+SMS, because the dev-only local-OTP bypass was removed so that one OTP path
+serves every environment. That reasoning still holds: this app's code path is
+identical everywhere, and only the service behind it differs. The review login
+`1234567890` / `123456` never reaches either.
 
 ## Conventions worth keeping
 
