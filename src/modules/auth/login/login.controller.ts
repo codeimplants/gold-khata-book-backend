@@ -1,6 +1,5 @@
 import express from "express";
 import crypto from "crypto";
-import axios from "axios";
 import dotenv from "dotenv";
 import { Request, Response } from "express";
 import authController from "../auth.controller";
@@ -34,7 +33,7 @@ const sendOtp = async (req: Request, res: Response) => {
   try {
     const DEFAULT_PHONE = "1234567890";
 
-    // Apple-review test number: bypass 2Factor entirely and hand back a
+    // Apple-review test number: bypass messaging entirely and hand back a
     // TEST_SESSION so the static OTP (123456) can verify it. This must work in
     // production too — App Review hits the live backend. No real SMS is sent.
     if (String(phone).trim() === DEFAULT_PHONE) {
@@ -59,134 +58,66 @@ const sendOtp = async (req: Request, res: Response) => {
       });
     }
 
-    // Code Implants Messaging, once this environment's .env carries
-    // MESSAGING_API_KEY (src/common/messaging.ts). Its otpId stands where
-    // 2Factor's session id did, so the app sees no change. Asking again inside
-    // the 30 s cooldown returns the code already on its way, not an error: this
-    // app's client retries a 429 and then shows a full-screen error, so only a
-    // real limit, such as the daily cap per number, ever reaches it as one.
-    const messaging = messagingClient();
-    if (messaging) {
-      try {
-        const otp = await messaging.otp.send({ phone: String(phone).trim(), purpose: "login" });
-        // Kept from the 2Factor path below, for the same reason: two sessions
-        // for one phone seconds apart must be visible. "(reused)" marks a repeat
-        // answered with the code already sent.
-        const reused = "reused" in otp && otp.reused ? " (reused)" : "";
-        console.log(
-          `[Auth] OTP session created rid=${req.id} phone=${maskPhone(phone)} sessionId=${otp.otpId}${reused}`,
-        );
-        return res.status(200).send({
-          ...otpSession(phone, otp.otpId),
-          msg: "OTP sent successfully!",
-          success: true,
-        });
-      } catch (error) {
-        if (error instanceof MessagingApiError && error.isQuotaRefusal) {
-          const retryAfterSec = error.retryAfterSeconds ?? 60;
-          return res
-            .status(429)
-            .set("Retry-After", String(retryAfterSec))
-            .send({
-              success: false,
-              msg:
-                error.code === "cooldown_active"
-                  ? `Please wait ${retryAfterSec} seconds before requesting another OTP.`
-                  : "Too many OTP requests for this number. Please try again later.",
-              retryAfterSec,
-            });
-        }
-        const status = error instanceof MessagingApiError ? error.status : null;
-        console.error(
-          `[Auth] OTP send failed rid=${req.id} phone=${maskPhone(phone)}:`,
-          error instanceof MessagingApiError ? `${error.status} ${error.code} ${error.message}` : error,
-        );
-        // Refused (a number 2Factor would not take, or every route failed) is
-        // the same 400 the 2Factor path gives; no answer at all is a 500.
-        if (status === 400 || status === 502) {
-          return res.status(400).send({ msg: "Failed to send OTP. Please try again.", success: false });
-        }
-        return res.status(500).send({ msg: "Failed to send OTP", success: false });
-      }
-    }
-
-    // An environment that has not moved to messaging (above) uses the real
-    // 2Factor SMS flow. Delete this path once prod has moved.
+    // Code Implants Messaging sends and checks every code (src/common/messaging.ts).
+    // Its otpId stands where 2Factor's session id used to, so the app saw no
+    // change. Asking again inside the 30 s cooldown returns the code already on
+    // its way, not an error: this app's client retries a 429 and then shows a
+    // full-screen error, so only a real limit, such as the daily cap per number,
+    // ever reaches it as one.
     //
-    // SoneBill short-circuited this in dev: it generated the code locally,
-    // returned it in the response body and never contacted 2Factor, so dev
-    // exercised a login path that production did not have. Gold Khata Book
-    // deliberately uses one OTP path everywhere, so a login that works in dev
-    // is evidence the same login works in prod. The only bypass left is the
-    // store-review test number handled above, which behaves identically in
-    // both. Note that dev logins now send real SMS and spend real quota.
-    const TWOFACTOR_API_KEY = process.env.TWOFACTOR_API_KEY;
-    const TEMPLATE_NAME = "OTP1";
-
-    if (!TWOFACTOR_API_KEY) {
-      return res.status(500).send({
-        msg: "OTP service unavailable",
-        success: false,
-      });
+    // One OTP path in every environment, as before: SoneBill once generated dev
+    // codes locally, so dev exercised a login path prod did not have. Here dev
+    // runs this same code against messaging's dev service, which sends nothing
+    // and answers 123456 (owner's decision, 2026-10-21: no real SMS outside prod).
+    const messaging = messagingClient();
+    if (!messaging) {
+      return res.status(500).send({ msg: "OTP service unavailable", success: false });
     }
-
-    const twoFactorUrl = `https://2factor.in/API/V1/${TWOFACTOR_API_KEY}/SMS/${phone}/AUTOGEN/${TEMPLATE_NAME}`;
-
-    const response = await axios.get(twoFactorUrl, { timeout: 10000 });
-
-    if (response.data && response.data.Status === "Success") {
-      const sessionId = response.data.Details;
-
-      const ttl = 5 * 60 * 1000;
-      const expires = Date.now() + ttl;
-      const data = `${phone}.${sessionId}.${expires}`;
-
-      const hash = crypto
-        .createHmac("sha256", process.env.HASH_KEY || "234")
-        .update(data)
-        .digest("hex");
-      const fullhash = `${hash}.${expires}`;
-
+    try {
+      const otp = await messaging.otp.send({ phone: String(phone).trim(), purpose: "login" });
       // Logged so that two sessions created for one phone seconds apart are
-      // visible. A client that retries send-otp gets a NEW session each time
-      // and keeps only the last reply; if an earlier reply is the one it kept,
-      // the user verifies against a session the app has already discarded, and
-      // nothing in the failure alone reveals that a second send ever happened.
+      // visible. A client that retries send-otp and keeps only the last reply
+      // must be traceable; "(reused)" marks a repeat answered with the code
+      // already sent rather than a second SMS.
+      const reused = "reused" in otp && otp.reused ? " (reused)" : "";
       console.log(
-        `[Auth] OTP session created rid=${req.id} phone=${maskPhone(phone)} sessionId=${sessionId}`,
+        `[Auth] OTP session created rid=${req.id} phone=${maskPhone(phone)} sessionId=${otp.otpId}${reused}`,
       );
-
-      res.status(200).send({
-        phone,
-        sessionId,
-        fullhash,
+      return res.status(200).send({
+        ...otpSession(phone, otp.otpId),
         msg: "OTP sent successfully!",
         success: true,
       });
-    } else {
-      console.error("2Factor API Error:", response.data);
-      return res.status(400).send({
-        msg: "Failed to send OTP. Please try again.",
-        success: false,
-        error: response.data,
-      });
+    } catch (error) {
+      if (error instanceof MessagingApiError && error.isQuotaRefusal) {
+        const retryAfterSec = error.retryAfterSeconds ?? 60;
+        return res
+          .status(429)
+          .set("Retry-After", String(retryAfterSec))
+          .send({
+            success: false,
+            msg:
+              error.code === "cooldown_active"
+                ? `Please wait ${retryAfterSec} seconds before requesting another OTP.`
+                : "Too many OTP requests for this number. Please try again later.",
+            retryAfterSec,
+          });
+      }
+      const status = error instanceof MessagingApiError ? error.status : null;
+      console.error(
+        `[Auth] OTP send failed rid=${req.id} phone=${maskPhone(phone)}:`,
+        error instanceof MessagingApiError ? `${error.status} ${error.code} ${error.message}` : error,
+      );
+      // Refused (a number 2Factor would not take, or every route failed) is a
+      // 400, as it always was; no answer at all is a 500.
+      if (status === 400 || status === 502) {
+        return res.status(400).send({ msg: "Failed to send OTP. Please try again.", success: false });
+      }
+      return res.status(500).send({ msg: "Failed to send OTP", success: false });
     }
   } catch (error: any) {
     console.error("Error sending OTP:", error.message);
-
-    if (error.response && error.response.data) {
-      return res.status(500).send({
-        msg: "Failed to send OTP",
-        error: error.response.data,
-        success: false,
-      });
-    }
-
-    res.status(500).send({
-      msg: "Server error",
-      error: error.message,
-      success: false,
-    });
+    res.status(500).send({ msg: "Server error", success: false });
   }
 };
 
@@ -222,15 +153,15 @@ const verifyOtp = async (req: Request, res: Response) => {
 
   try {
     if (String(phone).trim() === DEFAULT_PHONE) {
-      // Apple-review test phone: its send-otp bypass never contacts 2Factor,
+      // Apple-review test phone: its send-otp bypass never contacts messaging,
       // so the static OTP is the ONLY code that can verify it — never forward
-      // it to 2Factor (its TEST_SESSION would be rejected there). Every real
-      // phone must pass 2Factor verification; 123456 is not accepted for them.
+      // it (its TEST_SESSION would be not_found there). Every real phone must
+      // pass messaging's check; in prod, 123456 is not accepted for them.
       otpVerified = String(otp) === DEFAULT_OTP;
-    } else if (String(sessionId).startsWith("otp_")) {
-      // A messaging session (see sendOtp). Chosen by the id, not by the .env
-      // switch, so a code requested just before an environment moves still
-      // verifies: 2Factor session ids never start with otp_.
+    } else {
+      // Every session comes from messaging (see sendOtp); an id that is not
+      // one, such as a 2Factor session from before the move, is simply
+      // not_found and answers "Invalid OTP".
       const messaging = messagingClient();
       if (!messaging) {
         return res.status(500).json({
@@ -239,8 +170,10 @@ const verifyOtp = async (req: Request, res: Response) => {
         });
       }
       // Every way a code can fail comes back as a result, never an exception,
-      // so only a real transport failure reaches the catch below. That is the
-      // lesson of the 2Factor 400s described in the branch underneath.
+      // so only a real transport failure reaches the catch below. With 2Factor
+      // a wrong or stale code arrived as an HTTP 400 that axios threw, so it
+      // reached the client as a 500 its retry policy then re-sent against a
+      // spent session.
       const result = await messaging.otp.verify({ otpId: sessionId, code: String(otp) });
       if (result.verified) {
         otpVerified = true;
@@ -260,41 +193,10 @@ const verifyOtp = async (req: Request, res: Response) => {
           });
         }
       }
-    } else {
-      const TWOFACTOR_API_KEY = process.env.TWOFACTOR_API_KEY;
-
-      if (!TWOFACTOR_API_KEY) {
-        return res.status(500).json({
-          success: false,
-          msg: "OTP service unavailable",
-        });
-      }
-
-      const verifyUrl = `https://2factor.in/API/V1/${TWOFACTOR_API_KEY}/SMS/VERIFY/${sessionId}/${otp}`;
-      // 2Factor answers every rejection — wrong code, expired session, or a
-      // session an earlier verify already consumed — with HTTP 400, which axios
-      // throws on by default. That throw jumped straight past the "Invalid OTP"
-      // branch below into the catch, so an ordinary wrong/stale OTP reached the
-      // client as a 500 "Server error during verification", which the client's
-      // retry policy then treated as retryable and re-sent against a session
-      // that was already spent. Accept any status as data and decide on Status.
-      const response = await axios.get(verifyUrl, {
-        timeout: 10000,
-        validateStatus: () => true,
-      });
-
-      if (response.data?.Status === "Success") {
-        otpVerified = true;
-      } else {
-        console.error(
-          `[Auth] 2Factor rejected verification rid=${req.id} phone=${maskPhone(phone)} ` +
-            `sessionId=${sessionId} httpStatus=${response.status} details=${response.data?.Details}`,
-        );
-      }
     }
   } catch (error: any) {
-    // Only reachable now for a genuine transport failure talking to 2Factor or
-    // to messaging (DNS, timeout, connection reset), not for a rejected OTP.
+    // Only reachable now for a genuine transport failure talking to messaging
+    // (DNS, timeout, connection reset), not for a rejected OTP.
     console.error("Error verifying OTP:", error.response?.data || error.message);
     return res.status(500).json({
       success: false,

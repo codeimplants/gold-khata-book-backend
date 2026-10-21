@@ -41,7 +41,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@codeimplants/messaging-node": "^1.0.0",
+    "@codeimplants/messaging-node": "^1.0.1",
     "axios": "^1.13.4",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",

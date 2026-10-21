@@ -151,10 +151,9 @@ accepts `NODE_ENV=preprod`, but nothing is deployed for it.
 not authenticate here, which is intended.
 
 **OTPs go through Code Implants Messaging** (msg.codeimplants.com,
-`src/common/messaging.ts`) in any environment whose `.env` sets
-`MESSAGING_API_KEY`, and straight to 2Factor until then. The 2Factor account
-**is** shared with SoneBill and Sone Taran, by decision, and messaging holds its
-key. On dev, messaging sends nothing and every code is `123456`. That is the
+`src/common/messaging.ts`), which needs `MESSAGING_API_KEY` in `.env`. This app
+no longer talks to 2Factor or holds its key (removed 2026-10-21); the 2Factor
+account is shared with SoneBill and Sone Taran, and only messaging holds the key. On dev, messaging sends nothing and every code is `123456`. That is the
 owner's decision of 2026-10-21: no real SMS outside prod. Dev used to send real
 SMS, because the dev-only local-OTP bypass was removed so that one OTP path
 serves every environment. That reasoning still holds: this app's code path is
